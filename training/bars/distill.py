@@ -12,7 +12,7 @@ def P(*a):
     s = " ".join(str(x) for x in a); print(s, flush=True); log.write(s + "\n"); log.flush()
 tr, val, pd_tr, pd_val = load_data(); EV = make_eval(val, pd_val); bat = Batcher(tr, pd_tr, MELW, 0.)
 te = load_models(TEACH); TP = sum(p.numel() for p in te.parameters())
-syn = torch.load(f"syn_{os.environ.get('POOL', TEACH)}.pt")   # [N, T] teacher samples
+syn = torch.load(f"syn_{os.environ.get('POOL', TEACH)}.pt", weights_only=True)   # [N, T] teacher samples
 m = GPT(D, L, H, DROP).cuda(); NP = nparams(m)
 P("student", NAME, "params", NP, "D L H", D, L, H, "bits", BITS, "group", GROUP, "teacher", TEACH, TP, "syn", tuple(syn.shape), "alpha", ALPHA, "tau", TAU, "lr", LR, "drop", DROP, "syn_frac", SYNF)
 def get_batch(B):
@@ -45,7 +45,7 @@ def run(phase, minutes, lr0, patience, save):
                 if bad >= patience: P("early stop", phase); break
     return hist
 hist_fp = run("fp", MAXMIN, LR, 12, lambda: torch.save(m.state_dict(), f"{O}/{NAME}.fp.pt"))
-m.load_state_dict(torch.load(f"{O}/{NAME}.fp.pt")); best_fp = evaluate(m, EV)
+m.load_state_dict(torch.load(f"{O}/{NAME}.fp.pt", weights_only=True)); best_fp = evaluate(m, EV)
 np.savez(f"{O}/{NAME}.fp16.npz", **{k: v.cpu().numpy().astype(np.float16) for k, v in m.state_dict().items()})
 if BITS == 16:
     json.dump(dict(name=NAME, params=NP, D=D, L=L, H=H, V=V, T=T, bits=16, teacher=TEACH, alpha=ALPHA, tau=TAU, best=best_fp, best_fp=best_fp, hist_fp=hist_fp, tokens=TOKENS), open(f"{O}/{NAME}.json", "w"), indent=1)
@@ -54,7 +54,7 @@ if BITS == 16:
 add_fq(m, BITS, GROUP); ptq = evaluate(m, EV); P("PTQ (no QAT)", json.dumps(ptq))
 hist_q = run("qat", QATMIN, LR / 4, 6, lambda: torch.save(raw_state(m), f"{O}/{NAME}.qat_raw.pt"))
 # reload best QAT raw weights into a plain model, export quantized, verify by dequantizing the file
-plain = GPT(D, L, H, 0.).cuda(); plain.load_state_dict(torch.load(f"{O}/{NAME}.qat_raw.pt"))
+plain = GPT(D, L, H, 0.).cuda(); plain.load_state_dict(torch.load(f"{O}/{NAME}.qat_raw.pt", weights_only=True))
 sd = {k: v.float().cpu() for k, v in plain.state_dict().items()}
 meta = dict(D=D, L=L, H=H, V=V, T=T, **TOKENS, params=NP, bits=BITS, group=GROUP, teacher=TEACH)
 nbytes = export_quant(sd, BITS, GROUP, f"{O}/{NAME}.q{BITS}.bin", f"{O}/{NAME}.q{BITS}.json", meta)

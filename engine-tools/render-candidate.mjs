@@ -1,33 +1,28 @@
-// Silent offline clips of the real site (composers, samples, band, master, room) with any
+// Silent offline clips of the real site (composers, samples, band, master) with any
 // candidate model swapped in. Same seed, style and arrangement for every model.
 // Usage: node engine-tools/render-candidate.mjs <out dir> <seconds> <seed> <spec> [spec ...]
 //   spec: live | web:<model dir> | q:<path without .bin/.json>   (see engine-tools/candidates.mjs)
 // Writes <out dir>/<NAME>-<style>-seed<seed>.wav for jazzhop, steady and flow (or STYLES=jazzhop,...).
 import fs from 'node:fs';
-import http from 'node:http';
+import {serve} from './serve.mjs';
 import path from 'node:path';
 import {chromium} from 'playwright-core';
 const [outDir, seconds = '45', seed = '1', ...specs] = process.argv.slice(2);
 const root = new URL('..', import.meta.url).pathname;
 fs.mkdirSync(outDir, {recursive: true});
-// Static server: the site from public/, plus /cand/<n>/ for each candidate's files and /qload.js.
-const mounts = {'/qload.js': path.resolve(root, 'models/qload.js')};
+// Only the two files of each chosen checkpoint are mounted.
+const mounts = new Map([['/qload.js', path.resolve(root, 'models/qload.js')], ['/model-layout.js', path.resolve(root, 'models/model-layout.js')]]);
 const candidates = specs.map((spec, n) => {
-  if (spec === 'live') return {name: 'LIVE', kind: 'web', url: '/model/'};
-  if (spec.startsWith('web:')) { const dir = path.resolve(spec.slice(4)); mounts[`/cand/${n}/`] = dir + '/'; return {name: path.basename(dir), kind: 'web', url: `/cand/${n}/`}; }
-  const base = path.resolve(spec.slice(2)); mounts[`/cand/${n}/`] = path.dirname(base) + '/';
-  return {name: path.basename(base), kind: 'q', url: `/cand/${n}/${path.basename(base)}`};
+  if (spec === 'live') return {name:'LIVE', kind:'web', url:'/model/'};
+  const web = spec.startsWith('web:');
+  if (!web && !spec.startsWith('q:')) throw new Error('Expected live, web:<dir>, or q:<base>');
+  const selected = path.resolve(spec.slice(web ? 4 : 2));
+  const base = web ? path.join(selected, 'model') : selected;
+  const url = '/cand/' + n + '/model';
+  for (const ext of ['.json','.bin']) mounts.set(url + ext, fs.realpathSync(base + ext));
+  return {name:path.basename(selected), kind:web ? 'web' : 'q', url:web ? '/cand/' + n + '/' : url};
 });
-const types = {'.html': 'text/html', '.js': 'text/javascript', '.json': 'application/json', '.m4a': 'audio/mp4'};
-const server = http.createServer((req, res) => {
-  const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  const mount = Object.keys(mounts).find(m => p === m || (m.endsWith('/') && p.startsWith(m)));
-  const file = mount ? (mount.endsWith('/') ? mounts[mount] + p.slice(mount.length) : mounts[mount]) : path.join(root, 'site', 'public', p);
-  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404).end(); return; }
-  res.writeHead(200, {'Content-Type': types[path.extname(file)] || 'application/octet-stream'});
-  fs.createReadStream(file).pipe(res);
-});
-await new Promise(r => server.listen(0, '127.0.0.1', r));
+const server = await serve(0, mounts);
 const browser = await chromium.launch({channel: 'chrome', headless: true, args: ['--mute-audio']});
 const page = await browser.newPage();
 await page.goto(`http://127.0.0.1:${server.address().port}/model/model.json`);
@@ -37,7 +32,6 @@ for (const cand of candidates) for (const style of styles) {
     const composer = await import(`/engine/${{jazzhop: 'jazzhop/compose', flow: 'flow/compose', steady: 'steady/music'}[style]}.js`);
     const {createRenderer, createBank, addSample} = await import('/engine/render.js');
     const {loadSamples} = await import('/engine/loader.js');
-    const {createRoom} = await import('/engine/bed.js');
     let meta, bytes;
     if (cand.kind === 'web') [meta, bytes] = await Promise.all([fetch(cand.url + 'model.json').then(r => r.json()), fetch(cand.url + 'model.bin').then(r => r.arrayBuffer())]);
     else {
@@ -64,10 +58,7 @@ for (const cand of candidates) for (const style of styles) {
     buffer.copyToChannel(left, 0); buffer.copyToChannel(right, 1);
     const source = ctx.createBufferSource();
     source.buffer = buffer;
-    const room = createRoom(ctx);
-    room.setStyle(style);
-    source.connect(room.input);
-    room.output.connect(ctx.destination);
+    source.connect(ctx.destination);
     source.start();
     const out = await ctx.startRendering(), l = out.getChannelData(0), r = out.getChannelData(1);
     const pcm = new Int16Array(frames * 2);

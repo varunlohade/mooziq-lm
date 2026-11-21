@@ -2,7 +2,8 @@
 // the site's own engine and samples, as a long listening session would, and report:
 // memory after each song (heap and RSS, after GC), each song's integrated loudness
 // (ITU-R BS.1770, gated), the time to write a song, distinct-song fingerprints and styles.
-// Usage: node --expose-gc engine-tools/soak.mjs [songs=210] [station=7]
+// Usage: node --expose-gc tools/soak.mjs [songs=210] [station=7]
+import {learnedModels} from './learned-models.mjs';
 import fs from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {STYLES, ORDER} from '../site/public/engine/styles/index.js';
@@ -13,7 +14,7 @@ import {random} from '../site/public/engine/neural/random.js';
 const songs = +(process.argv[2] || 210), station = +(process.argv[3] || 7);
 const root = new URL('../site/public/', import.meta.url).pathname, engines = STYLES;
 const meta = JSON.parse(fs.readFileSync(root + 'model/model.json')), bin = fs.readFileSync(root + 'model/model.bin');
-const bytes = bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength);
+const bytes = bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength), learned = learnedModels();
 // Samples, decoded with ffmpeg and trimmed the way engine/loader.js trims them.
 const bank = createBank(), index = JSON.parse(fs.readFileSync(root + 'samples/index.json'));
 for (const [kind, names] of Object.entries(index)) for (const name of names) {
@@ -53,7 +54,7 @@ const t0 = performance.now();
 for (let n = 1; n <= songs; n++) {
   const r = random(station ^ Math.imul(n, 0x9e3779b9)); r();
   const seed = 1 + Math.floor(r() * 0x7ffffffe), style = styleOrder[(n - 1) % styleOrder.length];
-  const w0 = performance.now(), song = createArrangedSong(engines[style], meta, bytes, seed, style), writeMs = performance.now() - w0;
+  const w0 = performance.now(), song = createArrangedSong(engines[style], meta, bytes, seed, style, undefined, undefined, learned), writeMs = performance.now() - w0;
   const render = createRenderer(song, seed, bank, style), frames = Math.round(song.totalBars * 4 * 60 / song.bpm * SR);
   const L = new Float32Array(frames), R = new Float32Array(frames);
   const progression = [];
@@ -87,5 +88,6 @@ const summary = {
     progressions: fingerprints.progression.size, repeatedProgressions: [...fingerprints.progression.values()].filter(v => v > 1).length},
   bpmRanges: Object.fromEntries(styleOrder.map(s => [s, [Math.min(...by(s).map(r => r.bpm)), Math.max(...by(s).map(r => r.bpm))]]))
 };
+fs.mkdirSync(new URL('../out/', import.meta.url), {recursive:true});
 fs.writeFileSync(new URL('../out/soak.json', import.meta.url), JSON.stringify({summary, rows, mem}, null, 1));
 console.log(JSON.stringify(summary, null, 1));

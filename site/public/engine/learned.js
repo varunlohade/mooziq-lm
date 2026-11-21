@@ -1,4 +1,4 @@
-// The learned song path (a candidate, behind the ?engine=learned flag): a planner model
+// The learned song path: a planner model
 // writes the song's sections, and the song composer model (run by engine/slow.js) writes
 // chords, melody and bass bar by bar under the same calm rules as the preset path.
 // Both models are in public/model/learned/ (see their .json files for the vocabulary).
@@ -76,7 +76,19 @@ const ENERGY = [.42, .52, .6, .66];
 export function learnedPlan(planner, style, seed, {bpm, mode}) {
   const preset = PRESETS[style] || PRESETS.steady, beat = preset.beat, rng = random((seed ^ 0x1ea47ed) >>> 0);
   const raw = samplePlan(planner, style, seed, mode);
-  if (!raw.length || raw[0].type !== 'intro') raw.unshift({type: 'intro', len: 4, energy: 0, act: 4, transition: 'start'});
+  if (!raw.length || raw[0].type !== 'intro') {
+    // Sometimes enter directly on the model's theme. When we add an intro,
+    // let a melody or bass pickup introduce the harmony as well as solo keys.
+    const opening = random(seed ^ 0x4f70656e);
+    const startOnTheme = ['groove', 'hook'].includes(raw[0]?.type) && opening() < .5;
+    if (!startOnTheme) {
+      const tracks = [[4, 1], [12, 2]];
+      if (!preset.solo) tracks.push([6, 1]);
+      if (beat) tracks.push([13, 1]);
+      const act = pick(opening, tracks);
+      raw.unshift({type: 'intro', len: 4, energy: 0, act, transition: 'start'});
+    }
+  }
   if (raw.at(-1).type !== 'outro') raw.push({type: 'outro', len: 4, energy: 0, act: 4, transition: 'down'});
   const seen = {};
   const sections = raw.map(r => {

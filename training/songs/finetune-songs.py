@@ -15,7 +15,7 @@ from torch.nn import functional as F
 from repair_labels import repair
 
 
-def tune(name, songs, source, destination, trainer):
+def tune(name, train, valid, source, destination, trainer, balanced, reference=None):
     random.seed(17)
     torch.manual_seed(17)
     meta = json.loads((source / f"{name}.json").read_text())
@@ -26,7 +26,6 @@ def tune(name, songs, source, destination, trainer):
         start, size = tensor["off"], int(np.prod(tensor["shape"]))
         state[key] = torch.from_numpy(data[start:start+size].reshape(tensor["shape"]).astype(np.float32))
     model.load_state_dict(state)
-    train, valid = trainer.split(songs)
     planner = meta["kind"] == "planner"
 
     def rows(items):
@@ -50,7 +49,29 @@ def tune(name, songs, source, destination, trainer):
         logits = model(batch[:, :-1]).transpose(1, 2)
         return (F.cross_entropy(logits, target, reduction="none") * weights).sum(), weights.sum()
 
+    print(name, "training songs", len(train), "validation songs", len(valid), flush=True)
     train, valid = rows(train), rows(valid)
+    styles = train[:, 1] - meta["STY0"]
+    sample_weights = torch.bincount(styles)[styles].float().reciprocal()
+
+    if reference:
+        # Tilt sampling within each style towards windows whose harmonic motion
+        # resembles the references. Two-bar observations match the audio grid.
+        mix, intervals = reference["mixture"], torch.tensor(reference["intervals"])
+        chords = train[:, 6::2*meta["SLOT"]]
+        roots = (chords-meta["CH0"]) // meta["NQ"]
+        lags = reference["lags"]
+        start = max(lags)
+        target = roots[:, start:]
+        prob = mix[0] * intervals[(target-roots[:, start-1:-1]) % 12]
+        for lag, weight in zip(lags, mix[1:]):
+            prob += weight * (target == roots[:, start-lag:-lag])
+        valid_chords = chords[:, start:] >= meta["CH0"]
+        score = (prob.log()*valid_chords).sum(1) / valid_chords.sum(1).clamp_min(1)
+        for style in styles.unique():
+            mask = styles == style
+            tilt = (.5*(score[mask]-score[mask].median())).exp().clamp(.5,2.)
+            sample_weights[mask] *= tilt / tilt.mean()
 
     @torch.no_grad()
     def evaluate():
@@ -60,10 +81,14 @@ def tune(name, songs, source, destination, trainer):
 
     baseline = best = evaluate()
     winner = copy.deepcopy(model.state_dict())
-    opt = torch.optim.AdamW(model.parameters(), lr=.0004 if planner else .00012)
+    opt = torch.optim.AdamW(model.parameters(), lr=(.0004 if planner else .00012) * (.5 if balanced else 1))
     for epoch in range(6):
         model.train()
-        for batch in torch.randperm(len(train))[:800].split(16):
+        if balanced:
+            indices = torch.multinomial(sample_weights, min(len(train), 1200), replacement=True)
+        else:
+            indices = torch.randperm(len(train))[:800]
+        for batch in indices.split(16):
             value, count = loss(train[batch])
             opt.zero_grad()
             (value/count).backward()
@@ -84,14 +109,31 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     for arg in ("corpus", "trainer_dir", "weights", "output"):
         parser.add_argument(arg, type=Path)
+    parser.add_argument("--extra-corpus", type=Path)
+    parser.add_argument("--balanced", action="store_true", help="Sample styles with equal probability")
+    parser.add_argument("--model", choices=["planner", "songlm_s"])
+    parser.add_argument("--reference-harmony", type=Path)
     args = parser.parse_args()
+    if args.reference_harmony and (not args.balanced or args.model != "songlm_s"):
+        parser.error("--reference-harmony requires --balanced --model songlm_s")
+    reference = json.loads(args.reference_harmony.read_text()) if args.reference_harmony else None
     spec = importlib.util.spec_from_file_location("songmodels", args.trainer_dir / "songmodels.py")
     trainer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(trainer)
     torch.set_num_threads(4)
-    songs = [song for song in json.loads(args.corpus.read_text()) if song.get("sections")]
-    for song in songs:
-        repair(song)
+    train, valid, seen = [], [], set()
+    for corpus in filter(None, [args.corpus, args.extra_corpus]):
+        songs = [song for song in json.loads(corpus.read_text()) if song.get("sections")]
+        for song in songs:
+            if song["name"] in seen:
+                raise ValueError("Duplicate training song: " + song["name"])
+            seen.add(song["name"])
+            repair(song)
+        # Split each corpus independently so a warm start cannot move old
+        # training songs into validation, or train on former validation songs.
+        tr, va = trainer.split(songs)
+        train.extend(tr)
+        valid.extend(va)
     args.output.mkdir(exist_ok=True, parents=True)
-    for name in ("planner", "songlm_s"):
-        tune(name, songs, args.weights, args.output, trainer)
+    for name in ([args.model] if args.model else ("planner", "songlm_s")):
+        tune(name, train, valid, args.weights, args.output, trainer, args.balanced, reference)

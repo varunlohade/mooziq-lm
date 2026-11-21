@@ -1,8 +1,8 @@
 // Two-deck mixer on the audio thread. Each deck is one song: a queue of PCM bars from the
-// worker. Songs change with an equal-power crossfade, either at a scheduled frame or now.
+// worker. Each change fades out, leaves a second of silence, then fades in.
 const HALF_PI = Math.PI / 2, REPORT_BLOCKS = 16;
 // Final ceiling: transparent below -4 dBFS, then a soft knee that never passes -3.3 dBFS,
-// even where two songs overlap in a crossfade. tools/render.mjs applies the same curve.
+// tools/render.mjs applies the same curve.
 const KNEE = 10 ** (-4 / 20), TOP = 10 ** (-3.3 / 20);
 const ceiling = x => { const a = Math.abs(x); return a <= KNEE ? x : Math.sign(x) * (KNEE + (TOP - KNEE) * Math.tanh((a - KNEE) / (TOP - KNEE))); };
 
@@ -11,13 +11,11 @@ class Mixer extends AudioWorkletProcessor {
     super();
     this.decks = new Map();
     this.blocks = 0;
+    this.nextStartFrame = 0;
     this.underrun = 0;
     this.minAhead = Infinity;
     this.steadyMinAhead = Infinity;
-    this.gapUntil = 0;
-    this.pending = null;
     this.port.onmessage = ({data}) => {
-      if (data.t === 'hush') return this.hush(data);
       if (data.t !== 'port') return;
       this.link = data.port;
       this.link.onmessage = ({data: message}) => this.handle(message);
@@ -26,10 +24,10 @@ class Mixer extends AudioWorkletProcessor {
   deck(id) {
     let deck = this.decks.get(id);
     if (!deck) {
-      const playing = [...this.decks.values()].some(d => d.state === 'play') || currentFrame < this.gapUntil;
+      const first = this.decks.size === 0;
       // A song that starts with nothing playing waits until a few seconds are queued, so a
       // slow first bar cannot leave it short.
-      deck = {id, chunks: [], off: 0, pos: 0, queued: 0, gain: playing ? 0 : 1, state: 'wait', autostart: !playing,
+      deck = {id, chunks: [], off: 0, pos: 0, queued: 0, gain: 0, state: 'wait', autostart: first,
         ended: false, fadeIn: null, fadeOut: null, sched: null};
       this.decks.set(id, deck);
     }
@@ -38,6 +36,7 @@ class Mixer extends AudioWorkletProcessor {
   handle(message) {
     if (message.t === 'chunk') {
       const deck = this.deck(message.deck);
+      deck.beatFrames = 60 * sampleRate / message.bpm;
       deck.chunks.push(message);
       deck.queued += message.left.length;
     } else if (message.t === 'end') {
@@ -46,36 +45,50 @@ class Mixer extends AudioWorkletProcessor {
     } else if (message.t === 'fade') {
       if (message.at >= 0) {
         const from = this.decks.get(message.from);
-        if (from) from.sched = {to: message.to, at: message.at, frames: message.frames};
+        if (from) {
+          this.deck(message.to).autostart = false;
+          from.sched = {to: message.to, at: message.at, frames: message.frames};
+        }
         else this.drop(this.decks.get(message.to));
         return;
       }
+      const next = this.deck(message.to);
+      next.autostart = false;
+      let lead;
       for (const deck of [...this.decks.values()]) {
-        if (deck.id === message.to) continue;
+        if (deck === next) continue;
         deck.sched = null;
         if (deck.state === 'wait') this.drop(deck);
-        // A song already fading out (after a manual change) keeps its own fade.
-        else if (!deck.fadeOut) this.fadeOut(deck, message.frames);
+        else if (!lead || deck.gain > lead.gain) lead = deck;
       }
-      const next = this.deck(message.to);
-      // After a manual change the new song waits for the end of the silent gap.
-      next.autostart = false;
-      if (currentFrame < this.gapUntil) this.pending = {deck: next, frames: message.frames};
-      else this.fadeIn(next, message.frames);
+      // Start the outgoing fade on the beat if enough samples are queued.
+      // Take over immediately if the station is just starting or running dry.
+      if (lead?.fadeOut) {
+        this.queueEntrance(next, message.frames);
+        return;
+      }
+      if (lead) {
+        const delay = Math.ceil(lead.pos / lead.beatFrames) * lead.beatFrames - lead.pos;
+        const frames = Math.min(message.frames, Math.max(1, lead.queued));
+        const at = lead.pos + (lead.queued >= delay + frames ? Math.round(delay) : 0);
+        lead.sched = {to: next.id, at, frames};
+        lead.fadeOut = null;
+        for (const deck of this.decks.values()) {
+          if (deck !== lead && deck.state === 'play' && !deck.fadeOut) this.fadeOut(deck, frames);
+        }
+        if (lead.queued) return;
+        lead.sched = null;
+        this.drop(lead);
+      }
+      this.queueEntrance(next, message.frames);
     }
   }
-  // Manual change: fade everything out, then hold a silent gap before the next song.
-  hush({fade, gap}) {
-    const fadeFrames = Math.round(fade * sampleRate);
-    for (const deck of [...this.decks.values()]) {
-      deck.sched = null;
-      if (deck.state === 'wait') this.drop(deck);
-      else this.fadeOut(deck, fadeFrames);
-    }
-    this.pending = null;
-    this.gapUntil = currentFrame + fadeFrames + Math.round(gap * sampleRate);
+  queueEntrance(deck, frames) {
+    deck.autostart = false;
+    deck.entrance = {at: this.nextStartFrame, frames: Math.min(frames, Math.round(2.5 * sampleRate))};
   }
-  fadeIn(deck, frames) {
+  fadeIn(deck, frames, offset = 0) {
+    deck.startOffset = offset;
     deck.state = 'play';
     deck.fadeIn = {n: 0, len: frames};
     deck.gain = 0;
@@ -95,25 +108,30 @@ class Mixer extends AudioWorkletProcessor {
     left.fill(0);
     if (right !== left) right.fill(0);
     let dry = 0;
-    if (this.pending && currentFrame >= this.gapUntil) {
-      const {deck, frames} = this.pending;
-      this.pending = null;
-      if (this.decks.has(deck.id)) this.fadeIn(deck, frames);
-    }
     for (const deck of this.decks.values())
-      if (deck.autostart && deck.state === 'wait' && (deck.queued >= 5 * sampleRate || deck.ended)) { deck.autostart = false; this.fadeIn(deck, 64); }
+      if (deck.autostart && deck.state === 'wait' && (deck.queued >= 5 * sampleRate || deck.ended)) { deck.autostart = false; this.fadeIn(deck, Math.round(2.5 * sampleRate)); }
     for (const deck of [...this.decks.values()]) {
+      if (deck.entrance && deck.queued && deck.entrance.at < currentFrame + n) {
+        this.fadeIn(deck, deck.entrance.frames, Math.max(0, deck.entrance.at - currentFrame));
+        deck.entrance = null;
+      }
       if (deck.state !== 'play') continue;
       if (!deck.ended) {
         this.minAhead = Math.min(this.minAhead, deck.queued);
         if (deck.pos > 15 * sampleRate && !deck.fadeIn) this.steadyMinAhead = Math.min(this.steadyMinAhead, deck.queued);
       }
-      for (let i = 0; i < n; i++) {
+      const startOffset = deck.startOffset;
+      deck.startOffset = 0;
+      for (let i = startOffset; i < n; i++) {
         if (deck.sched && deck.pos >= deck.sched.at) {
           const {to, frames} = deck.sched;
           deck.sched = null;
           const next = this.decks.get(to);
-          if (next) { this.fadeOut(deck, frames); this.fadeIn(next, frames); }
+          if (next) {
+            this.fadeOut(deck, frames);
+            this.nextStartFrame = currentFrame + i + frames + Math.round(sampleRate);
+            this.queueEntrance(next, frames);
+          }
         }
         let gain = deck.gain;
         if (deck.fadeIn) {

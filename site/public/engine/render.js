@@ -14,7 +14,7 @@ export const SR = 44100;
 export const RELEASE = {keys: .35, felt: .3, glass: .5, bass: .15, sub: .12, pad: .35, drone: .6, counter: .35, arp: .3, swell: .02};
 const TAIL = 8;
 const LEVEL = {keys: 1.9, felt: 1.8, glass: 2.2, counter: 1.9, arp: 1.6, swell: 1.4, bass: .2, kick: .55, brush: .32, snare: .32, rim: .4, hat: .22,
-  shaker: .5, pad: .5, drone: .2, sub: .5, texture: .028, rumble: .5, riser: .35};
+  shaker: .5, pad: .5, drone: .2, sub: .5, texture: .016, rumble: .5, riser: .35};
 // Per-style changes to the mix. Jazz Hop leans on a deep bass and a punchy kit.
 const MIX = {jazzhop: {bass: 1.05, kick: .9, snare: 1.1, hat: 1.8, keys: 2.0, felt: 1.1}, steady: {hat: 1.3, brush: 1.5, kick: .85}};
 // Sampled instruments other than piano sit at different levels.
@@ -125,28 +125,11 @@ function synth(e, beatSec, L, R, start, send, rng) {
     if (s) { SL[start + i] += v * gl * env * s; SR_[start + i] += v * gr * env * s; }
   }
 }
-// Ambience: distant rain, made here (seeded noise and droplets), looped under the music.
-let rainLoop = null;
-function rain() {
-  if (rainLoop) return rainLoop;
-  const n = Math.round(7.3 * SR), rng = random(0x7a1e), out = [new Float32Array(n), new Float32Array(n)];
-  for (let ch = 0; ch < 2; ch++) {
-    let b = 0, lp = 0;
-    for (let i = 0; i < n; i++) {
-      const w = rng() * 2 - 1; b = .995 * b + .05 * w; lp += .3 * (w - lp);
-      out[ch][i] = .6 * b + .25 * lp;
-    }
-    for (let k = 0; k < 7.3 * 30; k++) {
-      const at = Math.floor(rng() * n), len = 200 + Math.floor(rng() * 500), amp = .3 * rng() ** 3;
-      for (let i = 0; i < len; i++) out[ch][(at + i) % n] += amp * (rng() * 2 - 1) * Math.exp(-6 * i / len);
-    }
-  }
-  return rainLoop = out;
-}
-
 export function createRenderer(song, seed, bank, style) {
   const beatSec = 60 / song.bpm, frames = 4 * beatSec * SR, tail = Math.ceil(TAIL * SR), room = ROOM[style];
   const rng = random(seed ^ 0x51f15e), master = createMaster(style), level = {...LEVEL, ...MIX[style]};
+  const feel = random(seed ^ 0x357dea);
+  const pulse = Array.from({length: 32}, () => ({lag: .004 * feel(), accent: .94 + .12 * feel()}));
   const backbeat = rng() < .5 ? 'snare' : 'rim', turn = {};
   // Buffers carried over bar lines: main, keys, lead and send buses, left and right.
   let carry = Array.from({length: 8}, () => new Float32Array(tail)), bar = 0, previous = [];
@@ -181,7 +164,7 @@ export function createRenderer(song, seed, bank, style) {
       play(sample, target[0], target[1], start, 2 ** ((e.pitch - sample.note) / 12), e.gain * vel * (level[e.type] ?? 1.8) * gain, e.pan,
         Math.round(e.duration * beatSec * SR), Math.round((e.releaseSec ?? RELEASE[e.type] ?? .3) * SR), Math.round(.006 * SR), send, e.type === 'swell');
     } else if (e.type === 'bass') {
-      const pitch = e.pitch > 45 ? e.pitch - 12 : e.pitch, sample = nearest(bank.bass, pitch);
+      const pitch = e.pitch, sample = nearest(bank.bass, pitch);
       // Samples still loading (a style switch in the first seconds): skip the note.
       if (!sample) return;
       play(sample, target[0], target[1], Math.max(0, at + Math.round(jitter(0, .012))), 2 ** ((pitch - sample.note) / 12),
@@ -190,9 +173,10 @@ export function createRenderer(song, seed, bank, style) {
       const kind = e.type === 'brush' ? backbeat : e.type, hits = bank.drums[kind];
       if (!hits) return;
       turn[kind] = ((turn[kind] ?? -1) + 1 + Math.floor(rng() * 2)) % hits.length;
-      // Drums sit a little behind the beat: a steady lateness with only a few ms of scatter,
-      // so the groove stays locked while the keys stay loose. The kick stays in the centre.
-      play(hits[turn[kind]], target[0], target[1], Math.max(0, at + Math.round(jitter(.008, .014))), 1, e.gain * vel * level[e.type],
+      // Repeat a two-bar touch pattern with a small variation on each hit.
+      const touch = pulse[((bar % 2) * 16 + Math.round(e.beat * 4)) % 32];
+      const onset = at + Math.round(touch.lag * SR + jitter(.006, .009));
+      play(hits[turn[kind]], target[0], target[1], Math.max(0, onset), 1, e.gain * vel * touch.accent * level[e.type],
         e.type === 'kick' ? 0 : e.pan, Infinity, 0, Math.round(.002 * SR), send);
     }
   }
@@ -211,11 +195,11 @@ export function createRenderer(song, seed, bank, style) {
     previous = events;
     const kicks = events.filter(e => e.type === 'kick').map(e => clock + Math.round(e.beat * beatSec * SR)).sort((a, b) => a - b);
     // Ambience: each kind (rain, cafe, forest, water) fades between bars to its new level.
-    // Recorded loops when loaded; rain falls back to the made-up loop until then.
+    // Fade in each field recording when available.
     const texTargets = {};
-    for (const e of events) if (e.type === 'texture') texTargets[e.inst || 'rain'] = e.gain * LEVEL.texture * (bank.ambience.has(e.inst) ? 1.6 : 1);
+    for (const e of events) if (e.type === 'texture' && bank.ambience.has(e.inst)) texTargets[e.inst] = e.gain * LEVEL.texture;
     const layers = [...new Set([...Object.keys(texTargets), ...Object.keys(texNow)])].map(kind => ({kind, from: texNow[kind] || 0, to: texTargets[kind] || 0,
-      loop: bank.ambience.get(kind) || (kind === 'rain' || kind === 'softrain' ? rain() : null)})).filter(l => l.loop && (l.from || l.to));
+      loop: bank.ambience.get(kind)})).filter(l => l.loop && (l.from || l.to));
     const cutTarget = info.filter ?? 20000, gainTarget = info.gain ?? 1, verb = room.wet * (info.reverb ?? 1);
     const stopAt = info.tapeStop != null ? Math.round(info.tapeStop * beatSec * SR) : Infinity;
     const [ml, mr] = bus.main, [kl, kr] = bus.keys, [ll, lr] = bus.lead, [sl, sr] = bus.send;

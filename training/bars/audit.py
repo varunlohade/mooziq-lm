@@ -8,7 +8,7 @@ def load(spec):
     if kind == "ens": m = load_models(name); return m, dict(params=sum(p.numel() for p in m.parameters()))
     j = json.load(open(f"{O}/{name}.json"))
     m = GPT(j["D"], j["L"], j["H"], 0.).cuda()
-    if kind == "pt": m.load_state_dict(torch.load(f"{O}/{name}.pt"))
+    if kind == "pt": m.load_state_dict(torch.load(f"{O}/{name}.pt", weights_only=True))
     elif kind == "npz": z = np.load(f"{O}/{name}.npz"); m.load_state_dict({k: torch.tensor(z[k].astype(np.float32)) for k in z.files})
     else: dq, _ = dequant_file(f"{O}/{name}.q{j['bits']}.bin", f"{O}/{name}.q{j['bits']}.json"); m.load_state_dict({k: torch.tensor(v) for k, v in dq.items()})
     return m, j

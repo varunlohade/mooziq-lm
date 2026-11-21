@@ -1,10 +1,11 @@
 // Song-form metrics from the engine's own events (no audio), across styles and seeds.
-// Usage: node engine-tools/form-metrics.mjs [raw|arranged] [seeds=5]
+// Usage: node tools/form-metrics.mjs [raw|arranged] [seeds=5]
 //   raw       the composers on their own (the site before song plans), 72 bars
 //   arranged  full songs from planSong() through the arranger
 // Per song: the longest stretch with no audible change, changes per minute, the largest
 // gap between big moments (section change, build, drop, tape stop), distinct progressions,
 // active layers (min/median/max), ear-candy events per minute.
+import {learnedModels} from './learned-models.mjs';
 import fs from 'node:fs';
 import {STYLES, ORDER} from '../site/public/engine/styles/index.js';
 import {createArrangedSong} from '../site/public/engine/arranger.js';
@@ -13,7 +14,7 @@ const mode = process.argv[2] || 'arranged', nSeeds = +(process.argv[3] || 5);
 const engines = STYLES;
 const meta = JSON.parse(fs.readFileSync(new URL('../site/public/model/model.json', import.meta.url)));
 const bin = fs.readFileSync(new URL('../site/public/model/model.bin', import.meta.url));
-const bytes = bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength);
+const bytes = bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength), learned = learnedModels();
 const LAYER = {keys: 'keys', felt: 'lead', glass: 'lead', bass: 'bass', drone: 'bass', kick: 'drums', brush: 'drums', snare: 'drums', rim: 'drums', hat: 'drums',
   counter: 'counter', pad: 'pad', shaker: 'perc', texture: 'texture', swell: 'fx', rumble: 'fx', riser: 'fx', arp: 'fx'};
 const CANDY = new Set(['swell', 'rumble', 'riser', 'arp']);
@@ -31,7 +32,7 @@ function sigs(events) {
 }
 function measure(style, seed) {
   const engine = engines[style];
-  const song = mode === 'raw' ? engine.createSong(meta, bytes, seed) : createArrangedSong(engine, meta, bytes, seed, style);
+  const song = mode === 'raw' ? engine.createSong(meta, bytes, seed) : createArrangedSong(engine, meta, bytes, seed, style, undefined, undefined, learned);
   const barSec = 4 * 60 / song.bpm, total = mode === 'raw' ? 72 : song.totalBars;
   const bars = [], all = [];
   for (let i = 0; i < total; i++) {
@@ -94,4 +95,5 @@ const rows = [];
 for (const style of (process.env.STYLES?.split(',') || ORDER)) for (let k = 0; k < nSeeds; k++) rows.push(measure(style, 1000003 * (k + 1) + 17));
 console.table(rows.map(({sections, layers, ...r}) => ({...r, layers: `${layers.min}/${layers.median}/${layers.max}`})));
 if (mode !== 'raw') for (const r of rows) console.log(r.style, r.seed, r.sections, JSON.stringify(r.development));
+fs.mkdirSync(new URL('../out/', import.meta.url), {recursive:true});
 fs.writeFileSync(new URL(`../out/form-metrics-${mode}.json`, import.meta.url), JSON.stringify(rows, null, 1));

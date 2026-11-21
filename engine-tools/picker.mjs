@@ -1,7 +1,7 @@
 // Style picker check (muted, headless): screenshots on desktop and phone, keyboard use,
-// the 1 s gap when the style changes during play, the last style remembered, and the
+// the crossfade when the style changes during play, the last style remembered, and the
 // phone row scrolling sideways without moving the page.
-// Usage: node engine-tools/picker.mjs
+// Usage: node tools/picker.mjs
 import fs from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import {serve} from './serve.mjs';
@@ -38,7 +38,7 @@ const watch = page => {
     keys.push([key, await page.evaluate(() => document.activeElement.dataset.style)]);
   }
   result.keyboard = {moves: keys, stillPlaying: await pressed(page)};
-  // Record the output, then choose Bossa with the keyboard (Enter) while playing.
+  // Record the output, then choose Chillhop with the keyboard (Enter) while playing.
   await page.evaluate(() => {
     const {ctx, master} = window.lofiDebug, dest = ctx.createMediaStreamDestination();
     master.connect(dest);
@@ -50,11 +50,11 @@ const watch = page => {
     window.__recStart = performance.now();
   });
   await page.waitForTimeout(4000);
-  await page.focus('[data-style=bossa]');
+  await page.focus('[data-style=chillhop]');
   const before = await page.evaluate(() => ({fades: window.lofiDebug.fades.length, shown: window.lofiDebug.shownLog.length}));
   const pressAt = await page.evaluate(() => performance.now());
   await page.keyboard.press('Enter');
-  // A second choice inside the gap must be ignored.
+  // A second choice during the handoff should become the active style.
   await page.waitForTimeout(300);
   await page.click('[data-style=sleep]');
   await page.waitForFunction(n => window.lofiDebug.shownLog.length > n, before.shown, {timeout: 30000});
@@ -91,7 +91,7 @@ const watch = page => {
   await context.close();
 }
 
-// Phone: the row scrolls sideways; choosing the last style centres it and the page stays put.
+// Phone: the style buttons wrap, and a selection stays inside the viewport.
 {
   const context = await browser.newContext({viewport: {width: 390, height: 844}, deviceScaleFactor: 2, isMobile: true, hasTouch: true});
   const page = await context.newPage();

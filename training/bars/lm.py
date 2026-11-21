@@ -247,7 +247,7 @@ def load_models(names, O="xfer/ckpt"):
     ms = []
     for n in names.split(","):
         j = json.load(open(f"{O}/{n}.json")); m = GPT(j["D"], j["L"], j["H"], 0.).cuda()
-        if os.path.exists(f"{O}/{n}.pt"): m.load_state_dict(torch.load(f"{O}/{n}.pt"))
+        if os.path.exists(f"{O}/{n}.pt"): m.load_state_dict(torch.load(f"{O}/{n}.pt", weights_only=True))
         else: z = np.load(f"{O}/{n}.npz"); m.load_state_dict({k: torch.tensor(z[k].astype(np.float32)) for k in z.files})
         m.eval(); ms.append(m)
     return ms[0] if len(ms) == 1 else Ens(ms).eval()

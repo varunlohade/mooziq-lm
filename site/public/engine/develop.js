@@ -1,9 +1,11 @@
 import {PRESETS} from './plan.js';
+import {voice, intervals} from './slow.js';
+import {random} from './neural/random.js';
 // Song development over a finished, arranged song (every bar's events known).
 //  - The main motif (two bars of the model's lead in the first theme) comes back varied:
 //    restated, shifted in rhythm and moved up a step, fragmented, and moved into the second
 //    theme. Every placed note is snapped to a pitch that fits the target bar.
-//  - The last two bars resolve to the tonic chord.
+//  - The last two bars form a cadence into the tonic chord.
 // Clash safety: a placed lead note never sits a semitone from any accompanying pitch class
 // in its bar, and notes on the beat are chord tones of the chord sounding there.
 const mod = (n, m) => (n % m + m) % m;
@@ -52,12 +54,42 @@ function fitter(events, shift, beatSec, before = [], rehits = false) {
   const same = (g, beat) => { const now = chordAt(beat); if (!now) return false; const a = pcs(now); return [...pcs(g)].every(p => a.has(p)); };
   const endLimit = beat => (groups.find(g => g.beat > beat + .05 && !(rehits && same(g, beat)))?.beat ?? 4) - .3 / beatSec - .03;
   const stableAt = beat => [...new Set([...(chordAt(beat)?.notes ?? []).map(n => mod(n.pitch, 12)), ...bass])];
-  return {snap, endLimit, stableAt};
+  return {snap, ok, endLimit, stableAt};
 }
 const leadNotes = bar => bar.filter(e => e.type === 'felt' && !e.harmony);
+// Harmonize a returning theme as a phrase. Keep the cheapest path ending on
+// each legal pitch so that one note can anticipate the direction of the next.
+function shapeReturn(notes) {
+  if (notes.length < 2) return;
+  let paths = [{cost: 0, pitches: []}];
+  for (const [index, {target, choices, event}] of notes.entries()) {
+    paths = choices.map(pitch => {
+      const pitchCost = Math.abs(pitch - target) + .05 * Math.abs(pitch - event.pitch);
+      let bestCost = Infinity, bestPath;
+      for (const path of paths) {
+        let cost = path.cost + pitchCost;
+        if (index > 0) {
+          const intended = target - notes[index - 1].target;
+          const actual = pitch - path.pitches.at(-1);
+          cost += .8 * Math.abs(actual - intended);
+          if (Math.sign(actual) !== Math.sign(intended)) cost += 2.5;
+        }
+        if (cost < bestCost) {
+          bestCost = cost;
+          bestPath = path;
+        }
+      }
+      return {cost: bestCost, pitches: [...bestPath.pitches, pitch]};
+    });
+  }
+  const best = paths.reduce((a, b) => a.cost <= b.cost ? a : b);
+  notes.forEach(({event}, i) => { event.pitch = best.pitches[i]; });
+}
+
 // Place a motif variant (notes with beat offsets across two bars) into bars [at, at+1].
 function place(bars, at, motif, {shift, beatSec, inst, step = 0, delay = 0, keep = Infinity, label, rehits}) {
   let placed = 0;
+  const replacements = [], returnNotes = [];
   for (let b = 0; b < 2; b++) {
     const bar = bars[at + b];
     if (!bar) continue;
@@ -72,12 +104,25 @@ function place(bars, at, motif, {shift, beatSec, inst, step = 0, delay = 0, keep
       if (duration < .2) continue;
       add.push({type: 'felt', beat, pitch: p, duration, gain: .11, pan: -.08, inst, releaseSec: .3, seed: (p * 7919 + at) >>> 0,
         slot: Math.min(7, Math.floor(beat * 2)), strong: Math.abs(beat - Math.round(beat)) < .06, stable: fit.stableAt(beat), motif: label});
+      if (label === 'refrain' || label === 'restated') {
+        const target = n.pitch + step, choices = [p];
+        // A small neighborhood preserves the register of the original arrangement.
+        for (let q = Math.max(57, p - 3); q <= Math.min(80, p + 3); q++) {
+          if (q !== p && Math.abs(q - target) <= 7 && fit.ok(q, beat)) choices.push(q);
+        }
+        returnNotes.push({target, choices, event: add.at(-1)});
+      }
     }
     const info = bar.info;
-    bars[at + b] = [...kept, ...add];
-    bars[at + b].info = info;
+    const replacement = [...kept, ...add];
+    replacement.info = info;
+    replacements.push(replacement);
     placed += add.length;
   }
+  // Keep the original phrase if the new harmony cannot support an audible reply.
+  if (placed < 2) return 0;
+  shapeReturn(returnNotes);
+  bars.splice(at, replacements.length, ...replacements);
   return placed;
 }
 export function develop(bars, plan, {shift, mode, beatSec, rehits = false}) {
@@ -85,10 +130,12 @@ export function develop(bars, plan, {shift, mode, beatSec, rehits = false}) {
   const sections = plan.sections, first = sections.find(s => s.type === 'A');
   // The motif: the busiest two-bar window of the first theme (else any theme), at least two notes.
   let motif = null;
-  for (const s of [first, ...sections.filter(x => x !== first && ['A', 'A2', 'B', 'B2'].includes(x.type))]) {
+  const themes = sections.filter(s => ['A','A2','B','B2'].includes(s.type));
+  const recurring = random(plan.seed ^ 0x31fc)() < .8;
+  for (const s of (recurring ? themes : [first, ...themes.filter(x => x !== first)])) {
     if (!s || motif) continue;
     let best = null;
-    for (let i = s.start; i < s.start + s.bars - 1; i++) {
+    for (let i = s.start; i < s.start + s.bars - 1; i += 2) {
       const notes = [0, 1].flatMap(b => leadNotes(bars[i + b]).map(e => ({beat: e.beat + 4 * b, pitch: e.pitch, duration: e.duration})));
       if (notes.length >= 2 && (!best || notes.length > best.notes.length)) best = {i, notes};
       if (best?.notes.length >= 4) break;
@@ -101,8 +148,22 @@ export function develop(bars, plan, {shift, mode, beatSec, rehits = false}) {
     const plans = [];
     // The motif's theme is A when the song has one; a song with only the second theme (B)
     // develops the motif within B, and A sections are then the other theme.
-    const sourceType = sections.find(x => record.motif.bar >= x.start && record.motif.bar < x.start + x.bars)?.type;
-    const theme = first || sourceType?.[0] !== 'B' ? 'A' : 'B', other = theme === 'A' ? 'B' : 'A';
+    const source = sections.find(s => record.motif.bar >= s.start && record.motif.bar < s.start + s.bars);
+    const theme = source.type[0], other = theme === 'A' ? 'B' : 'A';
+    // Let the listener hear the idea twice within its own theme before the
+    // arrangement moves on. The answer keeps its rhythm with a shorter ending.
+    const answer = record.motif.bar + 4;
+    if (answer + 1 < source.start + source.bars) {
+      plans.push({at: answer, label: 'answer', section: source,
+        opts: {keep: Math.max(2, motif.length - 1)}});
+    }
+    // Repeat the opening idea in its original rhythm after a contrasting phrase.
+    // Quieter arrangements can leave the lead out for a whole section.
+    if (recurring) {
+      for (const s of themes.filter(s => s.start >= source.start + source.bars && s.tracks.lead)) {
+        plans.push({at: s.start, label: 'refrain', section: s, opts: {}});
+      }
+    }
     for (const s of sections) {
       if (s.type === theme + '2') {
         plans.push({at: s.start, label: 'restated', opts: {}});
@@ -112,25 +173,73 @@ export function develop(bars, plan, {shift, mode, beatSec, rehits = false}) {
       if (s.type === 'bridge' && s.bars >= 4) plans.push({at: s.start, label: 'fragment', opts: {keep: 2}, section: s});
       if (s.type === 'outro' && s.bars >= 4) plans.push({at: s.start, label: 'fragment', opts: {keep: 3}, section: s});
     }
+    const occupied = new Set([record.motif.bar, record.motif.bar + 1]);
     for (const p of plans) {
+      if (occupied.has(p.at) || occupied.has(p.at + 1)) continue;
       const s = p.section ?? sections.find(x => p.at >= x.start && p.at < x.start + x.bars);
-      if (place(bars, p.at, motif, {shift, beatSec, rehits, inst: leadOf(s), label: p.label, ...p.opts}) >= 2) record.occurrences.push({bar: p.at, kind: p.label});
+      if (place(bars, p.at, motif, {shift, beatSec, rehits, inst: leadOf(s), label: p.label, ...p.opts}) >= 2) {
+        if (p.label === 'refrain') {
+          // A beat of breathing room before the downbeat. Let the chord and bass ring.
+          const pickup = bars[p.at - 1];
+          const parts = ['felt','counter','arp','hat','shaker','snare','rim','brush','kick'];
+          for (let i = pickup.length - 1; i >= 0; i--) {
+            const e = pickup[i];
+            if (e.beat >= 3 && parts.includes(e.type)) pickup.splice(i, 1);
+            else if (e.beat < 3 && ['felt','counter','arp'].includes(e.type))
+              e.duration = Math.min(e.duration, 3 - e.beat);
+          }
+        }
+        occupied.add(p.at);
+        occupied.add(p.at + 1);
+        record.occurrences.push({bar: p.at, kind: p.label});
+      }
     }
   }
-  // The ending: the last two bars hold the tonic chord (keys, pad, bass), with no melody.
-  const tonic = mod(shift + (mode === 'major' ? 0 : 9), 12), quality = mode === 'major' ? [0, 4, 7, 11] : [0, 3, 7, 10];
+  // A soft subdominant approach for the drumless styles, V7 for the beat
+  // styles. In minor the dominant borrows the raised seventh to lead home.
+  const tonic = mod(shift + (mode === 'major' ? 0 : 9), 12);
+  const tonicQuality = mode === 'major' ? 0 : 1;
+  const dominant = PRESETS[plan.style]?.beat;
+  let previousVoicing = [50, 55, 59, 64];
+  const preceding = bars.at(-3)?.filter(e => e.type === 'keys') ?? [];
+  const previousPitches = [...new Set(preceding.map(e => e.pitch))].sort((a,b) => a-b);
+  if (previousPitches.length >= 4) previousVoicing = previousPitches.slice(-4);
   for (const at of [bars.length - 2, bars.length - 1]) {
     const bar = bars[at];
     if (!bar) continue;
-    const info = bar.info, root = 48 + mod(tonic - 48, 12);
-    const keep = bar.filter(e => !['keys', 'felt', 'bass', 'drone', 'sub', 'pad', 'counter', 'arp', 'swell'].includes(e.type));
-    // Third, fifth, seventh and the root on top, around middle C.
-    const voicing = [quality[1], quality[2], quality[3], 12].map(d => root + d);
-    const chord = voicing.map((p, j) => ({type: 'keys', beat: .03 + j * .02, pitch: p, duration: 3.4, gain: .1, pan: [-.3, .2, -.12, .3][j], inst: 'piano', seed: 4242 + j}));
-    const low = [{type: 'pad', beat: 0, pitch: 36 + mod(tonic - 36, 12), duration: 3.4, gain: .045, pan: -.4, releaseSec: .35},
-      {type: 'pad', beat: 0, pitch: 36 + mod(tonic - 36, 12) + 7, duration: 3.4, gain: .035, pan: .4, releaseSec: .35}];
-    bars[at] = PRESETS[plan.style]?.solo ? [...keep, ...chord] : [...keep, ...chord, ...low];
-    bars[at].info = {...info, root: mod(tonic - shift, 12), quality: mode === 'major' ? 0 : 1, chords: undefined, tonic: true};
+    const home = at === bars.length - 1;
+    const root = mod(tonic + (home ? 0 : dominant ? 7 : 5), 12);
+    const quality = home || !dominant ? tonicQuality : 2;
+    const voicing = voice(intervals[quality].map(d => mod(root+d,12)), previousVoicing);
+    previousVoicing = voicing;
+    const keep = bar.filter(e => !ACCOMPANY.has(e.type) && e.type !== 'felt');
+    const chord = voicing.map((pitch, j) => ({type: 'keys', beat: .03 + j * .02, pitch,
+      duration: 3.4, gain: home ? .09 : .1, pan: [-.3,.2,-.12,.3][j], inst: 'piano', seed: 4242+j}));
+    if (!PRESETS[plan.style]?.solo) {
+      for (const interval of [0, 7]) chord.push({type: 'pad', beat: 0, pitch: 36 + root + interval,
+        duration: 3.4, gain: interval ? .035 : .045, pan: interval ? .4 : -.4, releaseSec: .35});
+    }
+    bars[at] = [...keep, ...chord];
+    bars[at].info = {...bar.info, root: mod(root-shift,12), quality, chords: undefined, tonic: home};
+  }
+  // Ambient pads can ring into the next bar. Leave space for the finished
+  // melody when a sustained pad voice would rub a semitone against it.
+  for (let i = 0; i < bars.length; i++) {
+    const bar = bars[i];
+    if (!bar.some(e => e.type === 'pad')) continue;
+    for (let k = bar.length - 1; k >= 0; k--) {
+      const pad = bar[k];
+      if (pad.type !== 'pad') continue;
+      const end = pad.beat + pad.duration + (pad.releaseSec ?? .35) / beatSec;
+      for (let j = Math.max(0, i - 2); j <= Math.min(bars.length - 1, i + Math.floor(end / 4)); j++) {
+        const offset = 4 * (j - i);
+        if (bars[j].some(n => n.type === 'felt' && [1, 11].includes(mod(n.pitch - pad.pitch, 12))
+          && offset + n.beat < end && offset + n.beat + n.duration + (n.releaseSec ?? .3) / beatSec > pad.beat)) {
+          bar.splice(k, 1);
+          break;
+        }
+      }
+    }
   }
   record.ending = {tonicPc: tonic, mode};
   return record;

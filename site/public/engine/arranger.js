@@ -6,11 +6,13 @@
 //
 // Clash safety: every added pitched part uses pitch classes the keys or bass already
 // sound in that bar, and the lead was written to avoid semitones against those.
+import {accompaniment} from './accompaniment.js';
 import {random} from './neural/random.js';
 import {padEvents} from './pad.js';
 import {planSong, validatePlan} from './plan.js';
 import {learnedPlan, REST_SHIFT} from './learned.js';
 import {develop} from './develop.js';
+import {refineRegister} from './register.js';
 
 const mod = (n, m) => (n % m + m) % m;
 const TRACK_OF = {keys: 'keys', glass: 'lead', felt: 'lead', bass: 'bass', drone: 'bass', sub: 'bass', kick: 'drums', brush: 'drums', snare: 'drums', rim: 'drums', hat: 'drums'};
@@ -51,6 +53,7 @@ export function createArrangedSong(engine, meta, bytes, seed, style, plan, onSec
   // The learned composer reads the section it is writing for from ctx (see engine/slow.js).
   const ctx = {sec: 0, act: 15}, songMeta = learned ? {...learned.composer.meta, style, ctx, restShift: REST_SHIFT[style] || 0} : meta, songBytes = learned ? learned.composer.bytes : bytes;
   const material = name => instances[name] ||= engine.createSong(songMeta, songBytes, siblingSeed(engine, seed, plan.materials[name].seedOffset));
+  const arrangeKeys = style === 'jazzhop' ? null : accompaniment(seed, style).arrange;
   const lead = material('A');
   const {bpm, shift} = lead, beatSec = 60 / bpm;
   const sectionAt = bar => plan.sections.find(s => bar >= s.start && bar < s.start + s.bars);
@@ -191,6 +194,10 @@ export function createArrangedSong(engine, meta, bytes, seed, style, plan, onSec
       else if (track === 'lead') events.push({...e, inst: t.lead.inst});
       else if (track === 'drums') events.push(e);
     }
+    if (arrangeKeys && t.keys) {
+      const chord = events.filter(e => e.type === 'keys');
+      events = [...events.filter(e => e.type !== 'keys'), ...arrangeKeys(chord, local % 2)];
+    }
     if (t.drums) events = [...events.filter(e => trackOf(e) !== 'drums'), ...drums(events.filter(e => trackOf(e) === 'drums'), t.drums.pattern, local, section)];
     if (t.bass) events.push(...bass(raw, t.bass.pattern));
     const keys = events.filter(e => e.type === 'keys'), leads = events.filter(e => e.type === 'felt');
@@ -218,6 +225,7 @@ export function createArrangedSong(engine, meta, bytes, seed, style, plan, onSec
     bars.push(nextBar());
   }
   const development = develop(bars, plan, {shift, mode: first.mode, beatSec, rehits: !!engine.rehits});
+  refineRegister(bars, plan);
   let cursor = 0;
   return {bpm, shift, plan, totalBars: plan.totalBars, development,
     nextBar: () => cursor < bars.length ? bars[cursor++] : nextBar()};

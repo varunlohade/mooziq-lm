@@ -140,7 +140,7 @@ if __name__ == "__main__":
             else:
                 bad += 1
                 if bad >= PAT: Pr("early stop"); break
-    m.load_state_dict(torch.load(f"{O}/{NAME}.pt")); bi = min(range(len(hist)), key=lambda i: hist[i]["val"])
+    m.load_state_dict(torch.load(f"{O}/{NAME}.pt", weights_only=True)); bi = min(range(len(hist)), key=lambda i: hist[i]["val"])
     # baseline for promotion: style-conditional unigram per slot (add-0.5 smoothing), same targets and weights as "val"
     if KIND == "planner": TR = torch.tensor([enc(z) for z in tr])
     else:

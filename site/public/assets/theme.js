@@ -1,11 +1,15 @@
 const params = new URLSearchParams(location.search), MOOD_KEY = 'lofi-mood';
-// ?mood= wins, then the listener's own pick, then the clock (day runs 07:00 through 18:59).
+const systemTheme = matchMedia('(prefers-color-scheme: dark)');
+function displayMood(mood) {
+  document.documentElement.dataset.mood = mood;
+  document.querySelector('meta[name="theme-color"]').content = mood === 'night' ? '#000000' : '#ffffff';
+  document.querySelector('[data-theme-toggle]')?.setAttribute('aria-label', mood === 'night' ? 'Use light theme' : 'Use dark theme');
+}
 function setMood() {
-  const hour = new Date().getHours();
   let picked = null;
   try { picked = localStorage.getItem(MOOD_KEY); } catch {}
   const moods = ['day', 'night'];
-  document.documentElement.dataset.mood = moods.includes(params.get('mood')) ? params.get('mood')
-    : moods.includes(picked) ? picked : (hour >= 7 && hour < 19 ? 'day' : 'night');
+  displayMood(moods.includes(params.get('mood')) ? params.get('mood')
+    : moods.includes(picked) ? picked : (systemTheme.matches ? 'night' : 'day'));
 }
 setMood();

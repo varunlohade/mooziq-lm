@@ -33,7 +33,7 @@ while time.time() - t0 < MAXMIN * 60:
             bad += 1
             if bad >= PATIENCE: P("early stop"); break
 bi = min(range(len(hist)), key=lambda i: hist[i]["ace"] + .25 * hist[i]["pd"])
-sd = torch.load(f"{O}/{NAME}.pt")
+sd = torch.load(f"{O}/{NAME}.pt", weights_only=True)
 if NP < 20e6: np.savez(f"{O}/{NAME}.npz", **{k: v.cpu().numpy().astype(np.float16) for k, v in sd.items()})
 json.dump(dict(name=NAME, params=NP, D=D, L=L, H=H, V=V, T=T, drop=DROP, noise=NOISE, lr=LR, wd=WD, melw=MELW, seed=SEED, steps=step, best=hist[bi], hist=hist, tokens=TOKENS),
           open(f"{O}/{NAME}.json", "w"), indent=1)

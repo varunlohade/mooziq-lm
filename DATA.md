@@ -32,6 +32,10 @@ Mooziq LM models learn **symbols, not audio**: chords, eighth-note melodies and 
 | **S8 / S4** students | distilled from samples of a 5-model ensemble (B483K, a 25M teacher and three baselines), all trained on the data above |
 | **Planner and song composer** | 587 full songs of 150-240 s (Jazz Hop 99, Steady 44, Flow 36; Rainy Café, Sleep, Bossa, Study Piano, Chillhop and Nature 68 each). Sections come from stem energy and chroma novelty on a 4-bar grid; active tracks come from stem energy |
 
+## Reference playlists used in the live release
+
+The fine-tune uses the symbolic song corpus above. Separately, `train-reference-harmony.py` estimates chord-root movement and recurrence from multiple local playlists. It gives each playlist equal weight, evaluates by holding out whole playlists and exports aggregate probabilities. The composer fine-tune can weight examples using these statistics. The register detector holds out whole transcribed songs before evaluating injected octave dips. Reference tracks and per-track analysis are kept local.
+
 ## 3. Recorded samples (playback only, not training data)
 
 The piano, bass, vibraphone, guitar, drums and ambience the site plays are CC0, public-domain or CC BY recordings, listed in [CREDITS.md](CREDITS.md). None of them were used to train a model.
@@ -41,7 +45,7 @@ The piano, bass, vibraphone, guitar, drums and ambience the site plays are CC0, 
 - **No raw audio.** The repository has none of the ACE-Step clips, Demucs stems or the original sample libraries. The scripts in `training/` regenerate the clips and the transcriptions from fixed seeds.
 - **No transcribed datasets.** The bar and song JSON files are not included; the scripts rebuild them.
 - **No teacher or ensemble checkpoints.** The 25M and 85M teachers and the larger baselines are not included. The released models are listed in `models/`.
-- **No third-party recordings.** No commercial or copyrighted music was used.
+- The reference playlists used for the current release are not distributed.
 
 ## Tools used in training
 

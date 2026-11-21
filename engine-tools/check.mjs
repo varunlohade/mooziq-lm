@@ -1,5 +1,5 @@
 // Real-Chrome playback check. Always muted. Usage:
-//   node engine-tools/check.mjs <steady|wander> <seconds> [throttle] [skips]
+//   node tools/check.mjs <steady|wander> <seconds> [throttle] [skips]
 // Records the master output through a MediaStreamDestination, then scans it for silent gaps.
 import fs from 'node:fs';
 import {spawnSync} from 'node:child_process';
@@ -42,7 +42,7 @@ await page.evaluate(() => {
   window.__rec = rec;
   window.__recStart = performance.now();
 });
-// Hidden-tab runs live in engine-tools/hidden.mjs: under Playwright a page always reports 'visible'.
+// Hidden-tab runs live in tools/hidden.mjs: under Playwright a page always reports 'visible'.
 const t0 = Date.now(), skipAt = [];
 const nSkips = +skips;
 for (let k = 0; k < nSkips; k++) skipAt.push(+seconds - 12 * (nSkips - k) - 6);
@@ -56,16 +56,14 @@ while ((Date.now() - t0) / 1000 < +seconds) {
     const before = await page.evaluate(() => ({fades: window.lofiDebug.fades.length, shown: window.lofiDebug.shownLog.length}));
     await page.click('#skip');
     const clicked = await page.evaluate(() => window.lofiDebug.skips.at(-1));
-    // A second press inside the gap must not start another change.
+    // Exercise a second request during preparation or overlap.
     await page.waitForTimeout(300);
     await page.click('#skip');
     await page.waitForFunction(n => window.lofiDebug.fades.length > n, before.fades, {timeout: 10000});
     await page.waitForTimeout(2500);
-    const debounced = await page.evaluate(n => window.lofiDebug.fades.length === n + 1 && window.lofiDebug.skips.length, before.fades);
     const r = await page.evaluate(([c, n]) => ({fadeMs: window.lofiDebug.fades.at(-1).at - c,
       shownMs: window.lofiDebug.shownLog.length > n ? window.lofiDebug.shownLog.at(-1).at - c : null,
       tune: document.querySelector('#tune').textContent}), [clicked, before.shown]);
-    r.secondPressIgnored = debounced !== false;
     skipResults.push(r);
     log('skip', r);
   }
@@ -116,16 +114,12 @@ for (let i = lead; i < frames; i++) {
   else { if (run > 2205) runs.push([(i - run) / 44100, run / 44.1]); run = 0; }
 }
 if (run > 2205) runs.push([(frames - run) / 44100, run / 44.1]);
-// Silences that start within 3 s after a New tune press are the intended gap; any other is a fault.
-const skipsRec = result.skipsAtSec.map(s => s - result.recStartSec);
-const intended = runs.filter(([at]) => skipsRec.some(s => at >= s - .2 && at <= s + 3));
-const faults = runs.filter(r => !intended.includes(r));
-const longest = Math.max(0, ...faults.map(r => r[1])) * 44.1, gaps = faults.length;
+// Count silence during manual handoffs as well as during unattended playback.
+const longest = Math.max(0, ...runs.map(r => r[1])), gaps = runs.length;
 const firstSkip = result.skipsAtSec[0] ?? Infinity;
 const autoChanges = result.fades.filter(fd => fd.atSec < firstSkip).length;
 const summary = {name, style, seconds: +seconds, throttle: +throttle, ...result, autoChanges, skipResults,
-  recording: {seconds: +(frames / 44100).toFixed(1), leadingSilenceMs: +(lead / 44.1).toFixed(1), longestSilenceMs: +(longest / 44.1).toFixed(1), gapsOver50ms: gaps,
-    manualGapsMs: intended.map(r => Math.round(r[1])),
+  recording: {seconds: +(frames / 44100).toFixed(1), leadingSilenceMs: +(lead / 44.1).toFixed(1), longestSilenceMs: +longest.toFixed(1), gapsOver50ms: gaps,
     peakDbfs: +(20 * Math.log10(peak)).toFixed(2), thresholdDbfs: -80}, problems};
 fs.writeFileSync(out + `check-${name}.json`, JSON.stringify(summary, null, 1));
 log(JSON.stringify(summary, null, 1));

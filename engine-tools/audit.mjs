@@ -1,6 +1,7 @@
 // Symbolic clash audit over whole planned songs,
 // every arranged part included, written by the same engine modules the site runs.
-// Usage: node engine-tools/audit.mjs [seed...]
+// Usage: node tools/audit.mjs [seed...]
+import {learnedModels} from './learned-models.mjs';
 import fs from 'node:fs';
 import {webcrypto} from 'node:crypto';
 import {STYLES, ORDER} from '../site/public/engine/styles/index.js';
@@ -10,7 +11,7 @@ import {createArrangedSong} from '../site/public/engine/arranger.js';
 const rate = 44100;
 const meta = JSON.parse(fs.readFileSync(new URL('../site/public/model/model.json', import.meta.url)));
 const bin = fs.readFileSync(new URL('../site/public/model/model.bin', import.meta.url));
-const bytes = bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength);
+const bytes = bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength), learned = learnedModels();
 // Direct-voice release lengths in each sound.js. The steady felt voice can carry its own releaseSec.
 // Release tails as the band plays them (engine/render.js). Felt notes can carry their own releaseSec.
 // Every pitched part: the lead ('felt', its harmony included) against all accompaniment.
@@ -26,7 +27,7 @@ function unionLength(spans) {
   return length;
 }
 function score(style, seed) {
-  const song = createArrangedSong(engines[style], meta, bytes, seed, style);
+  const song = createArrangedSong(engines[style], meta, bytes, seed, style, undefined, undefined, learned);
   const beat = 60 / song.bpm, frames = song.totalBars * 4 * beat * rate, notes = [];
   let strong = 0, matches = 0, bar = 0;
   for (; bar < song.totalBars; bar++) {

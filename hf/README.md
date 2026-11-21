@@ -21,17 +21,18 @@ Mooziq LM is a family of tiny transformers that write lo-fi music as symbols (ch
 
 | Folder | What it writes | Params | File | Used by the live site |
 |---|---|---|---|---|
-| `B483K` | One chord plus an 8-step melody per bar. Style tokens: Jazz Hop, Steady, Flow, Folk | 483,653 | 0.97 MB fp16 | **yes** |
+| [live](live) | Production composer and planner for all eight styles | 506,768 and 114,802 | 1.01 and 0.23 MB fp16 | yes |
+| `B483K` | One chord plus an 8-step melody per bar. Style tokens: Jazz Hop, Steady, Flow, Folk | 483,653 | 0.97 MB fp16 | fallback |
 | `S8-int8` | Same task; distilled student | 4.84M | 4.9 MB int8 | no |
 | `S4-int4` | Same task; distilled student | 8.75M | 4.7 MB int4 | no |
-| `planner` | A song plan: sections with type, length, energy, active tracks and transition; 9 styles | 114,802 | 0.23 MB fp16 | no (candidate) |
-| `song-composer` | Chord, 8 lead steps and 8 bass steps per bar, conditioned on the plan; 9 styles | 506,768 | 1.0 MB fp16 | no (candidate) |
+| `planner` | A song plan: sections with type, length, energy, active tracks and transition; 9 styles | 114,802 | 0.23 MB fp16 | original checkpoint |
+| `song-composer` | Chord, 8 lead steps and 8 bass steps per bar, conditioned on the plan; 9 styles | 506,768 | 1.0 MB fp16 | original checkpoint |
 
-Each folder has the weights (`.bin`), a JSON with the tensor layout and vocabulary, and a `meta.json`. The token formats are in `FORMAT-quantized.md` and `FORMAT-song-models.md`.
+The live folder pairs each binary with its JSON layout. The older folders have the weights (`.bin`), a JSON with the tensor layout and vocabulary, and a `meta.json`. The token formats are in `FORMAT-quantized.md` and `FORMAT-song-models.md`.
 
 ## Architecture
 
-All five are decoder-only transformers with learned token, position and slot embeddings, pre-LayerNorm blocks, GELU MLPs and a KV cache. Weights are raw fp16 (or int8/int4 with per-row or per-group scales). There is no ONNX and no runtime library: `transformer.js` (about 50 lines) runs them in a browser or Node.
+The models are decoder-only transformers with learned token, position and slot embeddings, pre-LayerNorm blocks, GELU MLPs and a KV cache. Weights are raw fp16 (or int8/int4 with per-row or per-group scales). There is no ONNX and no runtime library: `transformer.js` (about 50 lines) runs them in a browser or Node.
 
 ```js
 import {loadModel} from './transformer.js';
@@ -62,7 +63,7 @@ The models learn symbols only. Full details are in [DATA.md](https://github.com/
 - **ACE-Step 1.5 generations** (open model, MIT): 1,612 instrumental clips for the bar models and 587 full instrumental songs for the planner and song composer.
   - Transcribed to chords and melodies with basic-pitch (Apache-2.0) and librosa (ISC); Demucs (MIT) stems for full songs.
   - Some prompts named well-known artists as style references. The models learn only chords and melodies transcribed from ACE-Step's own output.
-- **No closed-model outputs** (such as text or music from Claude or GPT) are in the training data. No commercial or copyrighted recordings were used.
+- **No closed-model outputs** (such as text or music from Claude or GPT) are in the training data. For the current release, locally supplied reference playlists informed aggregate harmonic statistics used for fine-tuning. The weights and code are available without those recordings.
 - **Distillation:** the students learned from samples of a 5-model ensemble trained on the same data.
 
 ## Evaluation
@@ -79,7 +80,7 @@ The models learn symbols only. Full details are in [DATA.md](https://github.com/
 | song-composer | 1.832 | 2.544 |
 
 - **Browser kernel parity** with a float64 numpy reference: at most 7e-7 maximum logit difference.
-- **On the live site** (B483K):
+- **Historical browser benchmarks** (B483K):
   - writing a whole song takes about 0.3 s;
   - 210 songs (12.8 hours) ran with no memory growth;
   - a hidden-tab run of 31 minutes had 0 audio underruns.
@@ -103,7 +104,3 @@ The models learn symbols only. Full details are in [DATA.md](https://github.com/
   url = {https://github.com/varunlohade/mooziq-lm}
 }
 ```
-
-## Jazz Hop: fine-tuned song models
-
-The live Jazz Hop style is planned and composed by a fine-tuned song planner and multi-track composer (`models/jazzhop-finetuned/`, ~1.2 MB total), picked in a blind listening test. The other eight styles use the rule-based song planner with the bar-level model writing the chords and melody. See `site/public/engine/learned.js`.

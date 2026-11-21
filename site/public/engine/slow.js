@@ -6,6 +6,7 @@
 // melody pitch a semitone from the sounding bass or keys; mostly stepwise motion.
 import {loadModel} from './neural/transformer.js';
 import {random} from './neural/random.js';
+import reference from './reference-harmony.js';
 export const mod = (n, m) => (n % m + m) % m;
 export const scale = [0, 2, 4, 5, 7, 9, 11];
 export const intervals = [[0, 4, 7, 11], [0, 3, 7, 10], [0, 4, 7, 10], [0, 3, 6, 10], [0, 5, 7, 10]];
@@ -33,6 +34,10 @@ export function voice(pcs, last, target = [50, 55, 58, 62]) {
 // The learned song composer (meta.kind 'songlm', engine/learned.js) runs through the same
 // core and the same rules. Its bars also hold a section token and an active-track token
 // (from the plan, via meta.ctx) and eight bass tokens, which follow the same clash rules.
+const OPENING_ROOTS = [0, 2, 4, 5, 7, 9];
+export function openingRootForSeed(seed) {
+  return OPENING_ROOTS[Math.floor(random(seed ^ 0x4d26bc11)() * OPENING_ROOTS.length)];
+}
 const SONG_STYLE = {rainycafe: 'rainy_cafe', studypiano: 'study_piano'};
 export function createCore(meta, bytes, seed, opts) {
   const model = loadModel(meta, bytes), draw = random(seed ^ 0x2c1b);
@@ -56,7 +61,21 @@ export function createCore(meta, bytes, seed, opts) {
     for (let i = 0; i < ids.length; i++) if ((v -= weights[i]) < 0) return ids[i];
     return ids.at(-1);
   }
-  let lastKeys = opts.voicingTarget || [50, 55, 58, 62], lastPitch = Math.round((opts.low + opts.high) / 2), lastRoot = null;
+  // Give each composition a starting harmony and melodic register of its own.
+  // The model chooses the chord quality, subsequent progression and melody.
+  const character = random(seed ^ 0x4b22ac77);
+  const openingRoot = openingRootForSeed(seed);
+  const rootHistory = [];
+  function phraseBias(root) {
+    if (!rootHistory.length) return 0;
+    let probability = reference.mixture[0] * reference.intervals[mod(root - rootHistory.at(-1), 12)];
+    reference.lags.forEach((lag, i) => {
+      if (rootHistory.at(-lag) === root) probability += reference.mixture[i+1];
+    });
+    // A soft prior: the neural composer still responds to style, mode and section.
+    return .7 * Math.log(probability);
+  }
+  let lastKeys = opts.voicingTarget || [50, 55, 58, 62], lastPitch = Math.round(opts.low + character() * (opts.high - opts.low)), lastRoot = null;
   start();
   // One chord over two bars. `token` forces the chord (a repeat of a progression).
   function compose(token) {
@@ -67,16 +86,26 @@ export function createCore(meta, bytes, seed, opts) {
       feed(meta.BAR);
       const ctx = song ? meta.ctx : null;
       if (song) { feed(meta.SEC0 + ctx.sec); feed(meta.ACT0 + ctx.act); }
-      if (half === 0 && chord === undefined)
-        chord = sample(chords, .9, t => {
+      if (half === 0 && chord === undefined) {
+        let candidates = chords;
+        if (lastRoot === null) candidates = chords.filter(t => Math.floor((t - CH0) / NQ) === openingRoot);
+        // Two held decisions already span four bars. Move the harmony before
+        // recording a whole repeating progression on a single root.
+        else if (rootHistory.at(-2) === lastRoot) candidates = chords.filter(t => Math.floor((t - CH0) / NQ) !== lastRoot);
+        chord = sample(candidates, .9, t => {
           const r = Math.floor((t - CH0) / NQ), q = (t - CH0) % NQ;
-          return (r === lastRoot ? -3 : 0) + (opts.chordBias ? opts.chordBias(r, q, lastRoot) : 0);
+          return phraseBias(r) + (opts.chordBias ? opts.chordBias(r, q, lastRoot) : 0);
         });
+      }
       feed(chord);
       if (song) history.push(meta.BAR, meta.SEC0 + ctx.sec, meta.ACT0 + ctx.act, chord);
       else history.push(meta.BAR, chord);
       const root = Math.floor((chord - CH0) / NQ), quality = (chord - CH0) % NQ;
-      if (half === 0) lastRoot = root;
+      if (half === 0) {
+        lastRoot = root;
+        rootHistory.push(root);
+        if (rootHistory.length > reference.lags.at(-1)) rootHistory.shift();
+      }
       const pcs = intervals[quality].map(d => mod(root + d + shift, 12));
       const colour = mod((opts.colour ? opts.colour(root, quality) : scale.includes((root + 2) % 12) ? root + 2 : root) + shift, 12);
       const keys = half ? lastKeys : voice([...pcs.slice(1), colour], lastKeys, opts.voicingTarget);

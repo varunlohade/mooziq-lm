@@ -21,3 +21,20 @@ These are the scripts that produced the Mooziq LM models, as they ran. Only the 
 
 ## `web/`
 Formats (`FORMAT.md`), the int8/int4 loader (`qload.js`) and the kernel with a configurable slot period (`transformer_slot.js`).
+
+## Fine-tuning the live composer
+
+From the repository root, with PyTorch and the symbolic song corpus available, run:
+
+```sh
+python3 training/songs/finetune-songs.py songs.json training/songs models/live out/finetune --balanced --model songlm_s
+python3 training/songs/train-register.py out/register-weights.js songs.json
+```
+
+To fit a harmonic reference profile from your own playlists, run the following with two or more local mixes that you have permission to analyze. Pass the resulting JSON to the composer command with `--reference-harmony out/harmony.json`.
+
+```sh
+python3 training/songs/train-reference-harmony.py out/harmony.json mix1.wav mix2.wav --report out/validation.json
+```
+
+The analysis report can contain local track names. Only the aggregate profile is needed at inference.

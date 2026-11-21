@@ -5,20 +5,15 @@
   const toggle = document.querySelector('[data-theme-toggle]');
   if (!toggle) return;
   const root = document.documentElement;
-  const label = () => toggle.setAttribute('aria-label', root.dataset.mood === 'night' ? 'Switch to day' : 'Switch to night');
   const repaint = () => { if (typeof paintRoll === 'function') paintRoll(); };
   const apply = (mood) => {
     params.delete('mood');
-    root.dataset.mood = mood;
+    displayMood(mood);
     try { localStorage.setItem(MOOD_KEY, mood); } catch {}
-    label();
     repaint();
   };
   // Tile flip: the page splits into tiny tiles that lift off the screen, drift,
   // tilt and flip over to the new mood, in a wobbly ripple from the button.
-  // Switched off for v1: the toggle switches instantly. Set RIPPLE to true to bring the
-  // tile flip back; it also needs img-src data: blob: in the CSP.
-  const RIPPLE = false;
   const SPEED = 1.1, FLIP = 300;
   const css = () => [...document.styleSheets].flatMap((sheet) => [...sheet.cssRules].map((rule) => rule.cssText))
     .join('\n').replace(/:root/g, 'html') + '\n*{transition:none!important;animation:none!important}';
@@ -151,15 +146,15 @@
     stats.end = performance.now();
     fx.remove();
   };
+  displayMood(root.dataset.mood);
   toggle.removeAttribute('hidden');
-  label();
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const flips = (window.lofiDebug || {}).flips = [];
   let busy = false;
   toggle.addEventListener('click', () => {
     if (busy) return;
     const next = root.dataset.mood === 'night' ? 'day' : 'night';
-    if (!RIPPLE || reduced.matches) return apply(next);
+    if (reduced.matches) return apply(next);
     const r = toggle.getBoundingClientRect(), stats = {click: performance.now(), frames: 0};
     flips.push(stats);
     busy = true;

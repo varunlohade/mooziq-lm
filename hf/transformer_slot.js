@@ -1,7 +1,9 @@
+import {validateLayout} from './model-layout.js';
 // Browser/Node inference for the tiny lo-fi transformer. Plain Float32Array math, KV cache, no libraries.
 // Decoded float32 weights are shared by every song; each song keeps its own KV cache.
 const decoded = new WeakMap();
 export function loadModel(meta, f16buf) {
+  validateLayout(meta, f16buf.byteLength);
   const W = decoded.get(f16buf) || decode(meta, f16buf);
   decoded.set(f16buf, W);
   return session(meta, W);

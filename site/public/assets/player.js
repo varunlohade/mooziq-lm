@@ -4,7 +4,7 @@ const disc = $('#disc'), play = $('#play'), notes = [];
 const motion = matchMedia('(prefers-reduced-motion: reduce)');
 const query = new URLSearchParams(location.search);
 const SR = 44100, STYLE_KEY = 'lofi-style';
-const STYLE_NAMES = {jazzhop: 'Jazz Hop', flow: 'Flow', steady: 'Steady', rainycafe: 'Rainy Café', sleep: 'Sleep', bossa: 'Bossa', studypiano: 'Study Piano', chillhop: 'Chillhop', nature: 'Nature'};
+const STYLE_NAMES = {steady: 'Steady', flow: 'Flow', sleep: 'Sleep', studypiano: 'Study Piano', nature: 'Nature', rainycafe: 'Rainy Café', chillhop: 'Chillhop', jazzhop: 'jazz(experimental)'};
 const STYLES = Object.keys(STYLE_NAMES);
 const SECTION_NAMES = {intro: 'intro', A: 'theme', A2: 'theme', B: 'second theme', B2: 'second theme', break: 'break', bridge: 'bridge', outro: 'outro'};
 // Wander was replaced by Jazz Hop; old links and saved choices map across.
@@ -14,17 +14,15 @@ const sessionSeed = shared ?? crypto.getRandomValues(new Uint32Array(1))[0];
 const seedText = sessionSeed.toString(16).padStart(8, '0').toUpperCase();
 function storedStyle() { try { return styleName(localStorage.getItem(STYLE_KEY)); } catch { return null; } }
 const askedStyle = styleName(query.get('style'));
-let style = STYLES.includes(askedStyle) ? askedStyle : STYLES.includes(storedStyle()) ? storedStyle() : 'jazzhop';
+let style = STYLES.includes(askedStyle) ? askedStyle : STYLES.includes(storedStyle()) ? storedStyle() : STYLES[0];
 let playing = false, tune = 0, bpm = 0, key = '', position = 0, frame = 0, speed = 0, lastFrame = 0;
-let ctx, master, node, room, report = null, shown = 0, cursor = null;
+let ctx, master, node, report = null, shown = 0, cursor = null;
 const subtitle = size => `A never-ending radio, written live by a ${size} model on your device.`;
-$('#subtitle-text').textContent = subtitle('483K-parameter');
 const tunes = new Map(), written = new Map();
 let playedSection = '', melody = '', playedBar = 0, writingBar = 0, previousToken = '', currentToken = '', nextToken = '';
 const trackNumber = () => String(tune).padStart(3, '0');
 // Vercel Web Analytics: queue custom events until its script loads. Only the style is sent.
-window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
-const track = (name, data) => window.va('event', {name, data});
+const track = (name, data) => window.va?.('event', {name, data});
 const debug = window.lofiDebug = {sessionSeed, shownLog: [], fades: [], barMs: [], report: null, skips: [],
   get ctx() { return ctx; }, get master() { return master; }};
 
@@ -111,6 +109,11 @@ const hooks = {
 const worker = new Worker('engine/worker.js', {type: 'module'});
 worker.onerror = event => console.error('Engine failed', event.message);
 worker.onmessage = ({data}) => {
+  if (data.t === 'change-ready') {
+    changeBusy = false;
+    if (pendingChange) requestChange(pendingChange);
+    return;
+  }
   if (data.t === 'writing') {
     modelState.writing = data.section < data.of ? [data.section, data.of] : null;
     showModelStatus();
@@ -119,7 +122,7 @@ worker.onmessage = ({data}) => {
   if (data.t === 'tune') {
     tunes.set(data.deck, data.info);
     written.set(data.deck, []);
-    if (!shown || data.now) show(data.deck);
+    if (!shown || data.now || (data.manual && !playing)) show(data.deck);
   } else if (data.t === 'bar') {
     firstBar();
     const bars = written.get(data.deck);
@@ -142,7 +145,6 @@ worker.onmessage = ({data}) => {
 // Rename the cache whenever the shipped model changes; older copies are deleted.
 const MODEL = {bin: 'model/model.bin', json: 'model/model.json'}, MODEL_CACHE = 'lofi-model-song-v2';
 caches?.keys?.().then(names => names.filter(n => n.startsWith('lofi-model') && n !== MODEL_CACHE).forEach(n => caches.delete(n))).catch(() => {});
-const slowdown = +(query.get('slowdown') || 0);
 const modelState = debug.model = {phase: 'loading', received: 0, total: 0, cached: false, writing: null};
 async function cachedFetch(url, onProgress) {
   let cache = null;
@@ -165,7 +167,7 @@ const mb = n => (n / 1e6).toFixed(1);
 function showModelStatus() {
   const line = $('#model-status'), waiting = playing && !debug.firstAudio;
   if (modelState.phase === 'loading' && waiting) line.textContent = `Downloading the model… ${mb(modelState.received)} / ${mb(modelState.total || 967306)} MB`;
-  else if (modelState.writing && (waiting || changing)) line.textContent = `Writing the song… section ${modelState.writing[0]} of ${modelState.writing[1]}`;
+  else if (modelState.writing && waiting) line.textContent = `Writing the song… section ${modelState.writing[0]} of ${modelState.writing[1]}`;
   else line.textContent = '';
   line.hidden = !line.textContent;
 }
@@ -182,19 +184,19 @@ function showModelStatus() {
     const loadLearned = async () => {
       const [planner, composer] = await Promise.all([
         part('model/learned/planner.json', 'model/learned/planner.bin'),
-        part('model/learned/songlm_s.json', 'model/learned/songlm_s.bin')
+        part('model/learned/songlm_s.json', 'model/learned/songlm_s.bin?v=balanced1', progress)
       ]);
       return {planner, composer};
     };
-    const [composer, learned] = await Promise.all([
-      part(MODEL.json, MODEL.bin, progress),
-      loadLearned().catch(error => { console.warn('Using the preset engine', error); return null; })
-    ]);
+    const learned = await loadLearned().catch(error => {
+      console.warn('Using the preset engine', error);
+      return null;
+    });
+    const composer = learned?.composer ?? await part(MODEL.json, MODEL.bin, progress);
     modelState.phase = 'ready'; modelState.readyAt = performance.now();
     const buffers = [composer.bytes];
-    if (learned) buffers.push(learned.planner.bytes, learned.composer.bytes);
-    worker.postMessage({t: 'init', seed: sessionSeed, style, slowdown, ...composer, learned,
-      allLearned: query.get('engine') === 'learned'}, buffers);
+    if (learned) buffers.push(learned.planner.bytes);
+    worker.postMessage({t: 'init', seed: sessionSeed, style, ...composer, learned}, buffers);
     showModelStatus();
   } catch (error) { console.error('Model failed to load', error); }
 })();
@@ -217,22 +219,20 @@ loadAmbience(style);
 function show(id) {
   if (id === shown || !tunes.has(id)) return;
   shown = id;
-  room?.setStyle(tunes.get(id).style);
   debug.shownLog.push({deck: id, style: tunes.get(id).style, at: performance.now()});
   if (debug.shownLog.length > 200) debug.shownLog.splice(0, 100);
   debug.engine = tunes.get(id).engine;
   $('#subtitle-text').textContent = debug.engine === 'learned'
-    ? 'A never-ending radio, written live by a song planner and composer on your device.'
+    ? subtitle('507K-parameter')
     : subtitle('483K-parameter');
   hooks.onTune(tunes.get(id));
 }
 function onMixer({data}) {
   if (data.t === 'pos') {
     report = debug.report = {...data, at: ctx.currentTime};
+    rememberPlayback(data);
     if (!debug.firstAudio && data.decks.some(d => d[1] > 0)) {
       debug.firstAudio = performance.now();
-      // The room bed waits for the first song, so nothing plays before the model is ready.
-      room.mute(false, .5);
     }
     let lead = null;
     for (const d of data.decks) if (d[4] === 'play' && (!lead || d[2] > lead[2])) lead = d;
@@ -240,7 +240,6 @@ function onMixer({data}) {
   } else if (data.t === 'fade') {
     debug.fades.push({to: data.to, at: performance.now()});
     if (debug.fades.length > 200) debug.fades.splice(0, 100);
-    if (changing) { changing = false; room.mute(false, .15); }
   }
 }
 // Follow the sounding bar and eighth of the shown song.
@@ -282,46 +281,46 @@ async function start() {
     master.connect(ctx.destination);
     ctx.onstatechange = () => { if (playing && ctx.state !== 'running' && !document.hidden) ctx.resume().catch(() => {}); };
     await ctx.audioWorklet.addModule('engine/worklet.js');
-    const {createRoom} = await import(new URL('engine/bed.js', location.href).href);
-    room = createRoom(ctx);
-    room.mute(true, .001);
-    room.setStyle(tunes.get(shown)?.style || style);
-    room.output.connect(master);
     node = new AudioWorkletNode(ctx, 'lofi-mixer', {numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2]});
     node.port.onmessage = onMixer;
     const channel = new MessageChannel();
     node.port.postMessage({t: 'port', port: channel.port2}, [channel.port2]);
     worker.postMessage({t: 'port', port: channel.port1}, [channel.port1]);
-    node.connect(room.input);
+    node.connect(master);
   }
   await ctx.resume().catch(() => {});
-  if (playing) master.gain.setTargetAtTime(volume(), ctx.currentTime, .03);
+  if (playing) {
+    const gain = master.gain.value;
+    master.gain.cancelScheduledValues(ctx.currentTime);
+    master.gain.setValueAtTime(gain, ctx.currentTime);
+    master.gain.linearRampToValueAtTime(volume(), ctx.currentTime + .6);
+  }
 }
 function pause() {
   if (!playing) return;
   playing = false;
   updateTransport();
   if (!ctx) return;
+  master.gain.cancelScheduledValues(ctx.currentTime);
   master.gain.setTargetAtTime(0, ctx.currentTime, .025);
   setTimeout(() => { if (!playing) ctx.suspend().catch(() => {}); }, 160);
 }
-// A manual change (New tune or a style) stops the song: a 250 ms fade, exactly 1 s of
-// silence with the bed muted too, then the new song fades in over 150 ms. Presses during
-// the change are ignored. Automatic song changes keep their long crossfade.
-const GAP = {fade: .25, gap: 1};
-let changing = false;
-function manualChange(message) {
-  if (changing) return false;
-  if (playing && node && ctx.state === 'running') {
-    changing = true;
-    node.port.postMessage({t: 'hush', ...GAP});
-    room.mute(true, GAP.fade);
+// The worker keeps the current deck audible while preparing the requested tune.
+let changeBusy = false, pendingChange = null;
+function requestChange(message) {
+  if (changeBusy) {
+    pendingChange = message;
+    return;
   }
-  worker.postMessage(message);
-  return true;
+  changeBusy = true;
+  pendingChange = null;
+  worker.postMessage({...message, from: playing ? shown : undefined});
 }
 function skip() {
-  if (manualChange({t: 'skip'})) { debug.skips.push(performance.now()); track('new_tune', {style}); }
+  requestChange({t: 'skip', style});
+  debug.skips.push(performance.now());
+  if (debug.skips.length > 200) debug.skips.shift();
+  track('new_tune', {style});
 }
 function updateTransport() {
   showModelStatus();
@@ -359,7 +358,7 @@ function shareUrl() {
   return url.href;
 }
 function selectStyle(kind, user) {
-  if (user && !manualChange({t: 'style', style: kind})) return;
+  if (user) requestChange({t: 'style', style: kind});
   if (user) track('style_change', {from: style, to: kind});
   style = kind;
   try { localStorage.setItem(STYLE_KEY, kind); } catch {}
@@ -392,7 +391,7 @@ $('#share').onclick = async event => {
   const url = shareUrl(), label = $('#share');
   try {
     if (navigator.share) await navigator.share({title: document.title, url});
-    else { await navigator.clipboard.writeText(url); label.textContent = 'Link copied'; setTimeout(() => { label.textContent = 'Share station'; }, 1800); }
+    else { await navigator.clipboard.writeText(url); label.textContent = 'Link copied'; setTimeout(() => { label.textContent = 'Share replay'; }, 1800); }
   } catch {}
 };
 // Credits: a small panel that opens from the footer link and closes on Esc or an outside click.
@@ -411,8 +410,7 @@ motion.addEventListener('change',updateSpin);
 paintDisc('', '', '');
 selectStyle(style, false);
 updatePanel(true);
-setInterval(() => {
-  const before = document.documentElement.dataset.mood;
+systemTheme.addEventListener('change', () => {
   setMood();
-  if (before !== document.documentElement.dataset.mood) updatePanel(true);
-}, 30000);
+  updatePanel(true);
+});

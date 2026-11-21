@@ -4,8 +4,8 @@
   "planner": "planner.bin/planner.json",
   "composer": "songlm_s.bin/songlm_s.json"
  },
- "used_by": "site: Jazz Hop style (default) via engine/learned.js",
- "notes": "Fine-tuned from the 9-style song planner and multi-track song composer on Jazz Hop songs; chosen by the owner in a blind listening test. Other styles use the rule-based song planner.",
+ "used_by": "Historical Jazz Hop release",
+ "notes": "Jazz Hop fine-tune selected in a blind listening comparison. Current production weights are in live/.",
  "license": "MIT",
  "sizes_bytes": {
   "songlm_s.bin": 1013536,

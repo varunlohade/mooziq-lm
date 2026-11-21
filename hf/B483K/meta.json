@@ -1,6 +1,6 @@
 {
  "name": "Mooziq LM B483K",
- "role": "Shipped bar model (the one the site runs): one chord plus an 8-step melody per bar, style tokens Jazz Hop, Steady, Flow and Folk.",
+ "role": "Fallback bar model. Writes a chord and an eight-step melody.",
  "files": [
   "model.bin",
   "model.json"

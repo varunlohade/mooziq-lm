@@ -1,35 +1,54 @@
-// Local static server for public/ with the exact headers from vercel.json.
+// Serve the player on loopback. Offline renderers may also supply exact file routes.
 import http from 'node:http';
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
-const root = new URL('../site/public/', import.meta.url).pathname;
-const config = JSON.parse(fs.readFileSync(new URL('../site/vercel.json', import.meta.url)));
-const types = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json', '.bin': 'application/octet-stream', '.png': 'image/png'};
-export function serve(port = 0) {
-  const server = http.createServer((req, res) => {
-    const url = new URL(req.url, 'http://x');
-    // Vercel serves its analytics script on the deployed site; locally it is an empty stand-in.
-    if (url.pathname === '/_vercel/insights/script.js') {
-      for (const {key, value} of config.headers[0].headers) res.setHeader(key, value);
-      res.writeHead(200, {'Content-Type': 'text/javascript'}).end('');
-      return;
+import {fileURLToPath} from 'node:url';
+import {pipeline} from 'node:stream/promises';
+
+const root = await fs.realpath(fileURLToPath(new URL('../site/public/', import.meta.url)));
+const config = JSON.parse(await fs.readFile(new URL('../site/vercel.json', import.meta.url)));
+const types = {'.html':'text/html; charset=utf-8', '.js':'application/javascript', '.css':'text/css',
+  '.json':'application/json', '.png':'image/png', '.m4a':'audio/mp4'};
+const rules = config.headers.map(rule => ({...rule, pattern:new RegExp('^' + rule.source + '$')}));
+
+export async function serve(port = 0, mounts = new Map()) {
+  const server = http.createServer(async (req, res) => {
+    if (!['127.0.0.1', 'localhost'].some(host => req.headers.host === host + ':' + server.address().port)) {
+      res.writeHead(403).end(); return;
     }
-    let file = path.join(root, decodeURIComponent(url.pathname));
-    if (!file.startsWith(root)) { res.writeHead(403).end(); return; }
-    if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html');
-    if (!fs.existsSync(file)) { res.writeHead(404).end('not found'); return; }
-    for (const rule of config.headers) {
-      const re = new RegExp('^' + rule.source.replace('(.*)', '(.*)') + '$');
-      if (re.test(url.pathname)) for (const {key, value} of rule.headers) res.setHeader(key, value);
+    if (!['GET','HEAD'].includes(req.method)) { res.writeHead(405,{Allow:'GET, HEAD'}).end(); return; }
+    let route;
+    try { route = decodeURIComponent(new URL(req.url, 'http://localhost').pathname); }
+    catch { res.writeHead(400).end(); return; }
+    if (route.includes('\0')) { res.writeHead(400).end(); return; }
+    for (const rule of rules) {
+      if (rule.pattern.test(route)) for (const {key,value} of rule.headers) res.setHeader(key,value);
     }
-    res.setHeader('Content-Type', types[path.extname(file)] || 'application/octet-stream');
-    fs.createReadStream(file).pipe(res);
+    let handle;
+    try {
+      let file = mounts.get(route);
+      if (!file) {
+        file = await fs.realpath(path.resolve(root, '.' + route));
+        if (file === root || (await fs.stat(file)).isDirectory()) file = await fs.realpath(path.join(file,'index.html'));
+        if (!file.startsWith(root + path.sep)) { res.writeHead(403).end(); return; }
+      }
+      handle = await fs.open(file, 'r');
+      const stat = await handle.stat();
+      if (!stat.isFile()) { res.writeHead(404).end(); return; }
+      res.writeHead(200, {'Content-Type':types[path.extname(file)] || 'application/octet-stream','Content-Length':stat.size});
+      if (req.method === 'HEAD') res.end();
+      else await pipeline(handle.createReadStream(), res);
+    } catch {
+      if (!res.headersSent && !res.destroyed) res.writeHead(404).end();
+      else if (!res.destroyed) res.destroy();
+    } finally { await handle?.close().catch(() => {}); }
   });
-  return new Promise(resolve => server.listen(port, '127.0.0.1', () => resolve(server)));
+  return new Promise((resolve,reject) => {
+    server.once('error', reject);
+    server.listen(port,'127.0.0.1',() => resolve(server));
+  });
 }
-// Run directly to serve the site: node engine-tools/serve.mjs [port=8080]
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const server = await serve(Number(process.argv[2] || 8080));
   console.log('http://127.0.0.1:' + server.address().port + '/');
 }

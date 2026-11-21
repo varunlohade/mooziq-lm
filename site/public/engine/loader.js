@@ -29,7 +29,11 @@ export async function loadSamples(base, style, onSample, onReady, later = Promis
   const tier = (list, kind) => list.map(name => decode(`${base}samples/${kind}/${name}.m4a`, kind, name).then(onSample));
   // Tier 1 is what the first song needs: soft piano, plus bass and drums for beat styles.
   const band = QUIET.has(style) ? [] : [...tier(index.bass, 'bass'), ...tier(index.drums, 'drums')];
-  await Promise.all([...tier(index.piano.filter(n => n.endsWith('L')), 'piano'), ...band]);
+  // Jazz Hop can open on guitar or vibes. Load one central note of each so
+  // the first rendered bars use their intended timbre on a cold visit.
+  const opening = style === 'jazzhop' ? ['vibes', 'guitar'] : [];
+  const openingNotes = opening.flatMap(kind => tier(['64'], kind));
+  await Promise.all([...tier(index.piano.filter(n => n.endsWith('L')), 'piano'), ...band, ...openingNotes]);
   onReady();
   // The rest waits until the first song is playing, so it does not slow the start.
   await later;
@@ -37,6 +41,6 @@ export async function loadSamples(base, style, onSample, onReady, later = Promis
     ...(QUIET.has(style) ? [...tier(index.bass, 'bass'), ...tier(index.drums, 'drums')] : []),
     ...tier(index.piano.filter(n => n.endsWith('H')), 'piano'),
     // Lead instruments that songs bring in later (the plan falls back to piano until they arrive).
-    ...tier(index.vibes || [], 'vibes'), ...tier(index.guitar || [], 'guitar')
+    ...['vibes', 'guitar'].flatMap(kind => tier((index[kind] || []).filter(note => !opening.includes(kind) || note !== '64'), kind))
   ]);
 }

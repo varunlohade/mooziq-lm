@@ -1,26 +1,29 @@
-// Silent offline render of one song through the site's own modules (engine PCM + room bed),
-// in headless Chrome. Usage: node engine-tools/render.mjs <style id> <seed> <seconds> <out.wav>
+// Silent offline render of one song through the site's own modules (stereo engine PCM),
+// in headless Chrome. Usage: node tools/render.mjs <style id> <seed> <seconds> <out.wav>
 import fs from 'node:fs';
 import {serve} from './serve.mjs';
 import {chromium} from 'playwright-core';
 const [style = 'steady', seed = '1', seconds = '60', file = 'out/render.wav'] = process.argv.slice(2);
+fs.mkdirSync(new URL('../out/', import.meta.url), {recursive:true});
 const server = await serve();
 const browser = await chromium.launch({channel: 'chrome', headless: true, args: ['--mute-audio']});
 const page = await browser.newPage();
 await page.goto(`http://127.0.0.1:${server.address().port}/model/model.json`);
-const result = await page.evaluate(async ([style, seed, seconds]) => {
+const result = await page.evaluate(async ([style, seed, seconds, useLearned]) => {
   const composer = (await import('/engine/styles/index.js')).STYLES[style];
   const {PRESETS} = await import('/engine/plan.js');
   const {createRenderer, createBank, addSample} = await import('/engine/render.js');
   const {createArrangedSong} = await import('/engine/arranger.js');
   const {loadSamples, loadAmbience} = await import('/engine/loader.js');
-  const {createRoom} = await import('/engine/bed.js');
   const [meta, bytes] = await Promise.all([fetch('/model/model.json').then(r => r.json()), fetch('/model/model.bin').then(r => r.arrayBuffer())]);
   const bank = createBank();
   await loadSamples('/', style, sample => addSample(bank, sample), () => {}, Promise.resolve());
   await loadAmbience('/', PRESETS[style].textures, sample => addSample(bank, sample));
   // The same planned, arranged song the site plays.
-  const song = createArrangedSong(composer, meta, bytes, seed, style), render = createRenderer(song, seed, bank, style);
+  // Fetch the production models unless explicitly rendering the preset fallback.
+  const part = async name => ({meta: await fetch(`/model/learned/${name}.json`).then(r => r.json()), bytes: await fetch(`/model/learned/${name}.bin`).then(r => r.arrayBuffer())});
+  const learned = useLearned ? {planner: await part('planner'), composer: await part('songlm_s')} : undefined;
+  const song = createArrangedSong(composer, meta, bytes, seed, style, undefined, undefined, learned), render = createRenderer(song, seed, bank, style);
   const bars = [];
   const frames = Math.round(seconds * 44100), left = new Float32Array(frames), right = new Float32Array(frames);
   for (let at = 0; at < frames;) {
@@ -37,10 +40,7 @@ const result = await page.evaluate(async ([style, seed, seconds]) => {
   buffer.copyToChannel(left, 0); buffer.copyToChannel(right, 1);
   const source = ctx.createBufferSource();
   source.buffer = buffer;
-  const room = createRoom(ctx);
-  room.setStyle(style);
-  source.connect(room.input);
-  room.output.connect(ctx.destination);
+  source.connect(ctx.destination);
   source.start();
   const out = await ctx.startRendering(), l = out.getChannelData(0), r = out.getChannelData(1);
   const pcm = new Int16Array(frames * 2);
@@ -53,8 +53,8 @@ const result = await page.evaluate(async ([style, seed, seconds]) => {
   const bytesOut = new Uint8Array(pcm.buffer);
   let binary = '';
   for (let i = 0; i < bytesOut.length; i += 32768) binary += String.fromCharCode(...bytesOut.subarray(i, i + 32768));
-  return {pcm: btoa(binary), peak, bpm: song.bpm, shift: song.shift, bars, plan: song.plan};
-}, [style, +seed, +seconds]);
+  return {pcm: btoa(binary), peak, bpm: song.bpm, shift: song.shift, bars, plan: song.plan, development: song.development};
+}, [style, +seed, +seconds, process.env.LEARNED !== '0']);
 await browser.close();
 server.close();
 const data = Buffer.from(result.pcm, 'base64'), header = Buffer.alloc(44);
