@@ -1,0 +1,30 @@
+{
+ "name": "Mooziq LM B483K",
+ "role": "Shipped bar model (the one the site runs): one chord plus an 8-step melody per bar, style tokens Jazz Hop, Steady, Flow and Folk.",
+ "files": [
+  "model.bin",
+  "model.json"
+ ],
+ "format": "fp16, row-major; tensor offsets in model.json",
+ "params": 483653,
+ "bytes": 967306,
+ "architecture": {
+  "type": "decoder-only transformer",
+  "D": 96,
+  "L": 4,
+  "H": 4,
+  "vocab": 101,
+  "context_tokens": 163,
+  "tokens_per_bar": 10
+ },
+ "heldout_loss": {
+  "ace": 1.326,
+  "public_domain": 1.133
+ },
+ "shipped_in": "https://lofi.varunlohade.com",
+ "family": "Mooziq LM",
+ "license": "MIT",
+ "author": "Varun Lohade",
+ "kernel": "site/public/engine/neural/transformer.js (plain JS, no libraries)",
+ "provenance": "See DATA.md"
+}

@@ -1,0 +1,19 @@
+{
+  "name": "mooziq-lm",
+  "private": true,
+  "type": "module",
+  "description": "Mooziq LM: the tiny transformer and engine behind Unlimited Lofi Music",
+  "license": "MIT",
+  "scripts": {
+    "serve": "node engine-tools/serve.mjs",
+    "audit": "node engine-tools/audit.mjs 11 4242",
+    "metrics": "node engine-tools/form-metrics.mjs arranged 5",
+    "soak": "node --expose-gc engine-tools/soak.mjs 27"
+  },
+  "devDependencies": {
+    "playwright-core": "1.65.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

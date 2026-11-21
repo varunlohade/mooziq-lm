@@ -1,0 +1,29 @@
+{
+ "name": "Mooziq LM S8 (int8 student)",
+ "role": "Bar model, distilled from a 5-model ensemble; not used by the site (larger and slower).",
+ "files": [
+  "S8.q8.bin",
+  "S8.q8.json"
+ ],
+ "format": "int8 per-row scales; load with models/qload.js (dequantToF16), then the shipped kernel",
+ "params": 4835173,
+ "bytes": 4884158,
+ "architecture": {
+  "type": "decoder-only transformer",
+  "D": 256,
+  "L": 6,
+  "H": 8,
+  "vocab": 101,
+  "context_tokens": 163,
+  "tokens_per_bar": 10
+ },
+ "heldout_loss": {
+  "ace": 1.3043,
+  "public_domain": 1.0376
+ },
+ "family": "Mooziq LM",
+ "license": "MIT",
+ "author": "Varun Lohade",
+ "kernel": "site/public/engine/neural/transformer.js (plain JS, no libraries)",
+ "provenance": "See DATA.md"
+}

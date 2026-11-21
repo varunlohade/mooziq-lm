@@ -1,0 +1,29 @@
+{
+ "name": "Mooziq LM Song Composer",
+ "role": "Bar composer conditioned on section and active tracks: chord, 8 lead and 8 bass steps per bar, 9 styles. Candidate path, not used by the live site yet.",
+ "files": [
+  "songlm_s.bin",
+  "songlm_s.json"
+ ],
+ "format": "fp16; needs the slot period from meta.SLOT (models/transformer_slot.js)",
+ "params": 506768,
+ "bytes": 1013536,
+ "architecture": {
+  "type": "decoder-only transformer",
+  "D": 96,
+  "L": 4,
+  "H": 4,
+  "vocab": 176,
+  "context_tokens": 243,
+  "tokens_per_bar": 20
+ },
+ "heldout_loss": {
+  "val": 1.832,
+  "unigram_baseline": 2.544
+ },
+ "family": "Mooziq LM",
+ "license": "MIT",
+ "author": "Varun Lohade",
+ "kernel": "site/public/engine/neural/transformer.js (plain JS, no libraries)",
+ "provenance": "See DATA.md"
+}

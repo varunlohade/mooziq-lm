@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" data-mood="day">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>Unlimited lofi music — Varun Lohade</title>
+<link rel="stylesheet" href="assets/player.css"><link rel="icon" href="assets/cover.png"><meta name="description" content="A never-ending lo-fi radio, written live by a 483K-parameter model on your device."><script src="assets/theme.js"></script>
+<script defer src="assets/disc.js"></script><script defer src="assets/player.js"></script><script defer src="assets/mood.js"></script>
+</head>
+<body>
+<main>
+<header><a href="https://varunlohade.com"><span aria-hidden="true">↖</span> varunlohade.com</a><button class="theme-toggle" type="button" data-theme-toggle hidden aria-label="Switch to night"></button></header>
+<div class="stage">
+<section class="intro"><div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+<h1>Unlimited <span class="lofi">lofi</span> <span class="music">music.</span></h1><p id="subtitle"><span id="subtitle-text"></span><span id="model-status" hidden></span></p>
+<dl class="facts"><div><dt>Tune</dt><dd id="tune">—</dd></div><div><dt>Key</dt><dd id="key">—</dd></div><div><dt>Tempo</dt><dd><b id="bpm">—</b> <small>BPM</small></dd></div></dl></section>
+<div class="object"><canvas width="1000" height="1000" id="disc" role="img" aria-label="Silver compact disc with printed cobalt artwork"></canvas><canvas class="light rainbow" id="disc-rainbow" aria-hidden="true"></canvas><canvas class="light glint" id="disc-glint" aria-hidden="true"></canvas></div>
+<section class="writing" aria-labelledby="panel-title">
+<div class="line-title"><span id="panel-title">Melody roll</span><small id="bar"></small></div>
+<canvas id="roll" width="600" height="280" role="img" aria-label="Piano roll of the current melody"></canvas>
+<div id="model-readout"><div id="code" aria-label="Generated melody"></div>
+<div id="ticker" aria-label="Playback position"><span></span><strong></strong><span></span></div>
+<p id="progress"></p></div>
+</section>
+<div class="switches"><div class="format styles" id="styles" role="group" aria-label="Music style"><button data-style="jazzhop">Jazz Hop</button><button data-style="flow">Flow</button><button data-style="steady">Steady</button><button data-style="rainycafe">Rainy Café</button><button data-style="sleep">Sleep</button><button data-style="bossa">Bossa</button><button data-style="studypiano">Study Piano</button><button data-style="chillhop">Chillhop</button><button data-style="nature">Nature</button></div></div>
+<div class="transport"><button class="play" id="play"><svg viewBox="0 0 24 24" aria-hidden="true"><path id="play-icon" d="M6 3 21 12 6 21Z"/></svg><span>Play</span></button><button class="skip" id="skip"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 5 12 7-12 7ZM17 5h3v14h-3Z"/></svg>New tune</button><label class="volume"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h4l5-4v14l-5-4H3zM15 8c3 2 3 6 0 8m3-11c5 4 5 10 0 14"/></svg><input id="volume" type="range" min="0" max="100" value="65" aria-label="Volume"></label></div>
+</div>
+<footer><span>Station seed <b id="seed"></b><a id="share" href="./">Share station</a><button id="credits-toggle" class="link" type="button" aria-expanded="false" aria-controls="credits">Credits</button></span><div id="credits" role="dialog" aria-label="Credits" tabindex="-1" hidden><p>Drum hits: <a href="https://doi.org/10.5281/zenodo.15493892">WaivOps Lo-Fi Drums</a> (CC BY 4.0)</p><p>Piano, bass and nylon guitar: <a href="https://freepats.zenvoid.org/">FreePats</a> (CC0)</p><p>Vibraphone and shaker: <a href="https://github.com/sgossner/VCSL">VCSL</a> (CC0)</p><p>Rain, café, forest and stream recordings: <a href="https://commons.wikimedia.org/">Wikimedia Commons</a> (public domain and CC0)</p></div><span class="stereo"><i aria-hidden="true"></i>Stereo</span></footer>
+</main><script defer src="/_vercel/insights/script.js"></script></body></html>

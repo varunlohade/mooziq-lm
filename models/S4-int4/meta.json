@@ -1,0 +1,29 @@
+{
+ "name": "Mooziq LM S4 (int4 student)",
+ "role": "Bar model, distilled from a 5-model ensemble; not used by the site (about 88 ms per bar on an M4 Max).",
+ "files": [
+  "S4.q4.bin",
+  "S4.q4.json"
+ ],
+ "format": "int4, groups of 64; load with models/qload.js (dequantToF16), then the shipped kernel",
+ "params": 8751461,
+ "bytes": 4693078,
+ "architecture": {
+  "type": "decoder-only transformer",
+  "D": 320,
+  "L": 7,
+  "H": 10,
+  "vocab": 101,
+  "context_tokens": 163,
+  "tokens_per_bar": 10
+ },
+ "heldout_loss": {
+  "ace": 1.3006,
+  "public_domain": 1.0246
+ },
+ "family": "Mooziq LM",
+ "license": "MIT",
+ "author": "Varun Lohade",
+ "kernel": "site/public/engine/neural/transformer.js (plain JS, no libraries)",
+ "provenance": "See DATA.md"
+}

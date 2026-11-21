@@ -1,0 +1,15 @@
+node_modules/
+out/
+work/
+*.wav
+*.mp3
+*.flac
+*.webm
+*.pt
+*.npz
+.env*
+.vercel/
+.DS_Store
+__pycache__/
+# The Hugging Face layout duplicates models/; keep only its card in git.
+hf/**/*.bin

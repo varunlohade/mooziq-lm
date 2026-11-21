@@ -1,0 +1,29 @@
+{
+ "name": "Mooziq LM Planner",
+ "role": "Song planner: 9 style tokens; writes sections (type, length, energy, active tracks, transition). Candidate path, not used by the live site yet.",
+ "files": [
+  "planner.bin",
+  "planner.json"
+ ],
+ "format": "fp16; needs the slot period from meta.SLOT (models/transformer_slot.js)",
+ "params": 114802,
+ "bytes": 229604,
+ "architecture": {
+  "type": "decoder-only transformer",
+  "D": 64,
+  "L": 2,
+  "H": 4,
+  "vocab": 50,
+  "context_tokens": 124,
+  "tokens_per_section": 5
+ },
+ "heldout_loss": {
+  "val": 0.629,
+  "unigram_baseline": 1.516
+ },
+ "family": "Mooziq LM",
+ "license": "MIT",
+ "author": "Varun Lohade",
+ "kernel": "site/public/engine/neural/transformer.js (plain JS, no libraries)",
+ "provenance": "See DATA.md"
+}
