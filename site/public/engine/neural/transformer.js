@@ -27,7 +27,7 @@ function session(meta, W) {
   return {
     reset() { K = [...Array(L)].map(() => []); Vc = [...Array(L)].map(() => []); n = 0; },
     step(tok) {
-      const p = n, slot = Math.max(0, p - 3) % 10; let x = new Float32Array(D);
+      const p = n, slot = Math.max(0, p - 3) % (meta.SLOT || 10); let x = new Float32Array(D);
       for (let i = 0; i < D; i++) x[i] = W["tok.weight"].a[tok * D + i] + W["pos.weight"].a[p * D + i] + W["slot.weight"].a[slot * D + i];
       for (let l = 0; l < L; l++) {
         const pre = `blocks.${l}.`, hN = ln(x, W[pre + "ln1.weight"], W[pre + "ln1.bias"]);

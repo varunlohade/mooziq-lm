@@ -1,3 +1,4 @@
+import {PRESETS} from './plan.js';
 // Song development over a finished, arranged song (every bar's events known).
 //  - The main motif (two bars of the model's lead in the first theme) comes back varied:
 //    restated, shifted in rhythm and moved up a step, fragmented, and moved into the second
@@ -96,14 +97,18 @@ export function develop(bars, plan, {shift, mode, beatSec, rehits = false}) {
   }
   if (motif) {
     // A diatonic step up: the next scale tone above each note (then snapped to fit).
-    const leadOf = s => s.tracks.lead?.inst ?? first.tracks.lead?.inst ?? 'piano';
+    const leadOf = s => s.tracks.lead?.inst ?? first?.tracks.lead?.inst ?? 'piano';
     const plans = [];
+    // The motif's theme is A when the song has one; a song with only the second theme (B)
+    // develops the motif within B, and A sections are then the other theme.
+    const sourceType = sections.find(x => record.motif.bar >= x.start && record.motif.bar < x.start + x.bars)?.type;
+    const theme = first || sourceType?.[0] !== 'B' ? 'A' : 'B', other = theme === 'A' ? 'B' : 'A';
     for (const s of sections) {
-      if (s.type === 'A2') {
+      if (s.type === theme + '2') {
         plans.push({at: s.start, label: 'restated', opts: {}});
         if (s.bars >= 12) plans.push({at: s.start + 8, label: 'shifted up a step', opts: {delay: .5, step: 2}});
       }
-      if ((s.type === 'B' || s.type === 'B2') && s.bars >= 8) plans.push({at: s.start + s.bars - 4, label: 'moved into the second theme', opts: {step: -3}, section: s});
+      if ((s.type === other || s.type === other + '2') && s.bars >= 8) plans.push({at: s.start + s.bars - 4, label: 'moved into the second theme', opts: {step: -3}, section: s});
       if (s.type === 'bridge' && s.bars >= 4) plans.push({at: s.start, label: 'fragment', opts: {keep: 2}, section: s});
       if (s.type === 'outro' && s.bars >= 4) plans.push({at: s.start, label: 'fragment', opts: {keep: 3}, section: s});
     }
@@ -124,7 +129,7 @@ export function develop(bars, plan, {shift, mode, beatSec, rehits = false}) {
     const chord = voicing.map((p, j) => ({type: 'keys', beat: .03 + j * .02, pitch: p, duration: 3.4, gain: .1, pan: [-.3, .2, -.12, .3][j], inst: 'piano', seed: 4242 + j}));
     const low = [{type: 'pad', beat: 0, pitch: 36 + mod(tonic - 36, 12), duration: 3.4, gain: .045, pan: -.4, releaseSec: .35},
       {type: 'pad', beat: 0, pitch: 36 + mod(tonic - 36, 12) + 7, duration: 3.4, gain: .035, pan: .4, releaseSec: .35}];
-    bars[at] = [...keep, ...chord, ...low];
+    bars[at] = PRESETS[plan.style]?.solo ? [...keep, ...chord] : [...keep, ...chord, ...low];
     bars[at].info = {...info, root: mod(tonic - shift, 12), quality: mode === 'major' ? 0 : 1, chords: undefined, tonic: true};
   }
   record.ending = {tonicPc: tonic, mode};

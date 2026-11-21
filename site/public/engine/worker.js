@@ -16,7 +16,7 @@ const SCALE = [0, 2, 4, 5, 7, 9, 11];
 const mod = (n, m) => (n % m + m) % m;
 const noteName = p => NAMES[mod(p, 12)] + (Math.floor(p / 12) - 1);
 
-let meta, bytes, station, style, mixer, outbox = [], tuneIndex = 0, spare, busy = false, slowdown = 0;
+let meta, bytes, learned = null, allLearned = false, station, style, mixer, outbox = [], tuneIndex = 0, spare, busy = false, slowdown = 0;
 // Test hook: ?slowdown=ms adds that much work per bar, to stand in for a slow device.
 const stall = ms => { const end = performance.now() + ms; while (performance.now() < end); };
 const decks = new Map();
@@ -43,11 +43,12 @@ function makeTune(kind) {
   const r = random(seed ^ 0x51ed27);
   // Each song follows its own plan (sections, tracks, transitions); the next song starts
   // as this one's outro ends.
-  const song = createArrangedSong(engine, meta, bytes, seed, kind, undefined, (section, of) => postMessage({t: 'writing', tune: n, section, of}));
+  const models = allLearned || kind === 'jazzhop' ? learned : null;
+  const song = createArrangedSong(engine, meta, bytes, seed, kind, undefined, (section, of) => postMessage({t: 'writing', tune: n, section, of}), models);
   const fade = 6 + 2 * r(), duration = Math.max(30, song.totalBars * 4 * 60 / song.bpm - fade);
   return {
     n, seed, style: kind, song, render: createRenderer(song, seed, bank, kind),
-    info: {tune: n, seed, style: kind, key: keyName(plan), bpm: plan.bpm, shift: plan.shift, mode: plan.mode,
+    info: {tune: n, seed, style: kind, engine: models ? 'learned' : 'preset', key: keyName(plan), bpm: plan.bpm, shift: plan.shift, mode: plan.mode,
       duration, fade, sections: song.plan.sections.map(s => [s.type, s.bars])}
   };
 }
@@ -84,7 +85,9 @@ function renderBar(deck) {
   if (slowdown) stall(slowdown);
   const ms = performance.now() - t0;
   const {info: bar} = events, {shift, mode} = deck.info;
-  const tokens = bar.tokens.map(t => t === meta.M0 ? '·' : t === meta.M0 + 1 ? '~' : noteName(meta.LO + t - meta.M0 - 2 + shift));
+  // The melody tokens come from whichever composer wrote the song.
+  const m = deck.info.engine === 'learned' ? learned.composer.meta : meta;
+  const tokens = bar.tokens.map(t => t === m.M0 ? '·' : t === m.M0 + 1 ? '~' : noteName(m.LO + t - m.M0 - 2 + shift));
   const notes = events.filter(e => e.type === 'felt').map(e => ({
     slot: e.slot, pitch: e.pitch, degree: degreeOf(e.pitch, shift, mode)
   }));
@@ -163,6 +166,8 @@ onmessage = async ({data}) => {
     style = data.style;
     slowdown = data.slowdown ?? slowdown;
     ({meta, bytes} = data);
+    learned = data.learned || null;
+    allLearned = data.allLearned;
     if (bankReady) openDeck(style, 'first');
     pump();
   } else if (data.t === 'sample') {

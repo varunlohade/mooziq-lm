@@ -30,9 +30,14 @@ export function voice(pcs, last, target = [50, 55, 58, 62]) {
 // offbeat starts), hold (bias towards holding), rest (bias towards resting), step (penalty
 // per semitone of leap), low/high (sounding melody range), colour(root, quality) -> the
 // fourth voicing tone, chordBias(root, quality, lastRoot), voicingTarget.
+// The learned song composer (meta.kind 'songlm', engine/learned.js) runs through the same
+// core and the same rules. Its bars also hold a section token and an active-track token
+// (from the plan, via meta.ctx) and eight bass tokens, which follow the same clash rules.
+const SONG_STYLE = {rainycafe: 'rainy_cafe', studypiano: 'study_piano'};
 export function createCore(meta, bytes, seed, opts) {
   const model = loadModel(meta, bytes), draw = random(seed ^ 0x2c1b);
   const {CH0, NQ, M0, LO, HI, T} = meta, {shift, mode} = opts;
+  const song = meta.kind === 'songlm', perBar = meta.SLOT || 10;
   const chords = [];
   for (let r = 0; r < 12; r++) for (let q = 0; q < NQ; q++)
     if (intervals[q].every(d => scale.includes((r + d) % 12))) chords.push(CH0 + r * NQ + q);
@@ -40,8 +45,9 @@ export function createCore(meta, bytes, seed, opts) {
   const feed = t => { logits = model.step(t); used++; };
   function start() {
     model.reset(); used = 0;
-    for (const t of [meta.BOS, meta[opts.styleToken] ?? meta.LOFI, mode === 'major' ? meta.MAJ : meta.MIN]) feed(t);
-    for (const t of history.slice(-20)) feed(t);
+    const styleToken = song ? meta.STY0 + meta.STYLES.indexOf(SONG_STYLE[meta.style] || meta.style) : meta[opts.styleToken] ?? meta.LOFI;
+    for (const t of [meta.BOS, styleToken, mode === 'major' ? meta.MAJ : meta.MIN]) feed(t);
+    for (const t of history.slice(song ? -4 * perBar : -20)) feed(t);
   }
   function sample(ids, temp, bias = () => 0) {
     const scores = ids.map(t => logits[t] / temp + bias(t));
@@ -54,18 +60,21 @@ export function createCore(meta, bytes, seed, opts) {
   start();
   // One chord over two bars. `token` forces the chord (a repeat of a progression).
   function compose(token) {
-    if (used + 20 > T) start();
+    if (used + 2 * perBar > T) start();
     const tokens = [[], []];
     let chord = token, line = [], active = null;
     for (let half = 0; half < 2; half++) {
       feed(meta.BAR);
+      const ctx = song ? meta.ctx : null;
+      if (song) { feed(meta.SEC0 + ctx.sec); feed(meta.ACT0 + ctx.act); }
       if (half === 0 && chord === undefined)
         chord = sample(chords, .9, t => {
           const r = Math.floor((t - CH0) / NQ), q = (t - CH0) % NQ;
           return (r === lastRoot ? -3 : 0) + (opts.chordBias ? opts.chordBias(r, q, lastRoot) : 0);
         });
       feed(chord);
-      history.push(meta.BAR, chord);
+      if (song) history.push(meta.BAR, meta.SEC0 + ctx.sec, meta.ACT0 + ctx.act, chord);
+      else history.push(meta.BAR, chord);
       const root = Math.floor((chord - CH0) / NQ), quality = (chord - CH0) % NQ;
       if (half === 0) lastRoot = root;
       const pcs = intervals[quality].map(d => mod(root + d + shift, 12));
@@ -78,7 +87,8 @@ export function createCore(meta, bytes, seed, opts) {
         const ids = [M0], at = half * 8 + slot;
         if (active) ids.push(M0 + 1);
         const onBeat = slot % 2 === 0;
-        if ((onBeat || opts.offbeats) && line.length < opts.maxNotes && at < 14)
+        // Learned composer: no melody where the plan has the lead off.
+        if ((onBeat || opts.offbeats) && line.length < opts.maxNotes && at < 14 && !(song && !(ctx.act & 8)))
           for (let p = LO; p <= HI; p++) {
             const sounding = p + shift;
             if (sounding < opts.low || sounding > opts.high || !scale.includes(p % 12)) continue;
@@ -88,13 +98,13 @@ export function createCore(meta, bytes, seed, opts) {
           }
         const t = sample(ids, 1.05, t => {
           // Rests after a phrase, holds while a note sounds, small steps between notes.
-          if (t === M0) return active ? -1.2 : opts.rest + (line.length === 0 && at >= 6 ? -1.5 : 0) + (line.length && at % 8 > 4 ? .6 : 0);
+          if (t === M0) return active ? -1.2 : opts.rest + (song ? meta.restShift || 0 : 0) + (line.length === 0 && at >= 6 ? -1.5 : 0) + (line.length && at % 8 > 4 ? .6 : 0);
           if (t === M0 + 1) return opts.hold;
           const pitch = LO + t - M0 - 2 + shift;
           return -opts.step * Math.abs(pitch - lastPitch) - (pitch === lastPitch ? 1 : 0);
         });
         feed(t); tokens[half].push(t); history.push(t);
-        if (history.length > 200) history = history.slice(-40);
+        if (history.length > 20 * perBar) history = history.slice(-4 * perBar);
         if (t === M0) active = null;
         else if (t === M0 + 1) active.len += .5;
         else {
@@ -104,8 +114,38 @@ export function createCore(meta, bytes, seed, opts) {
         }
       }
       tokens[half].info = {root, quality, stable, keys, bass, pcs};
+      if (song) tokens[half].info.bassLine = bassLine(ctx, root, pcs, keys);
     }
     return {chord, tokens, line};
+  }
+  // The learned composer's bass for one bar: chord tones on the beat, scale tones between
+  // that are not a semitone from the chord, a few notes per bar, low register.
+  function bassLine(ctx, root, pcs, keys) {
+    const {B0, BLO, BHI} = meta, notes = [];
+    let held = null, lastBass = 28 + mod(root + shift - 28, 12);
+    for (let slot = 0; slot < 8; slot++) {
+      const ids = [B0];
+      if (held) ids.push(B0 + 1);
+      if (ctx.act & 2 && notes.length < 4)
+        for (let p = BLO; p <= BHI; p++) {
+          const sounding = p + shift;
+          if (sounding < 28 || sounding > 50 || !scale.includes(mod(p, 12))) continue;
+          if (slot % 2 === 0 ? !pcs.includes(mod(sounding, 12)) : pcs.some(q => [1, 11].includes(mod(sounding - q, 12)))) continue;
+          if (keys.some(q => [1, 11].includes(mod(sounding - q, 12)))) continue;
+          ids.push(B0 + 2 + p - BLO);
+        }
+      const t = sample(ids, 1, t => {
+        if (t === B0) return held ? -1 : slot === 0 ? -2 : 0;
+        if (t === B0 + 1) return .8;
+        const pitch = BLO + t - B0 - 2 + shift;
+        return (slot === 0 && mod(pitch - root - shift, 12) === 0 ? 1.5 : 0) - .15 * Math.abs(pitch - lastBass);
+      });
+      feed(t); history.push(t);
+      if (t === B0) held = null;
+      else if (t === B0 + 1) held.len += .5;
+      else { lastBass = BLO + t - B0 - 2 + shift; held = {pitch: lastBass, at: slot, len: .5}; notes.push(held); }
+    }
+    return notes;
   }
   // Melody notes of one bar of a two-bar chord, as events: they (and their release) end
   // before the next chord.

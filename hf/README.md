@@ -103,3 +103,7 @@ The models learn symbols only. Full details are in [DATA.md](https://github.com/
   url = {https://github.com/varunlohade/mooziq-lm}
 }
 ```
+
+## Jazz Hop: fine-tuned song models
+
+The live Jazz Hop style is planned and composed by a fine-tuned song planner and multi-track composer (`models/jazzhop-finetuned/`, ~1.2 MB total), picked in a blind listening test. The other eight styles use the rule-based song planner with the bar-level model writing the chords and melody. See `site/public/engine/learned.js`.

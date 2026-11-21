@@ -1,0 +1,16 @@
+{
+ "name": "Mooziq LM \u2014 Jazz Hop fine-tuned planner + song composer",
+ "files": {
+  "planner": "planner.bin/planner.json",
+  "composer": "songlm_s.bin/songlm_s.json"
+ },
+ "used_by": "site: Jazz Hop style (default) via engine/learned.js",
+ "notes": "Fine-tuned from the 9-style song planner and multi-track song composer on Jazz Hop songs; chosen by the owner in a blind listening test. Other styles use the rule-based song planner.",
+ "license": "MIT",
+ "sizes_bytes": {
+  "songlm_s.bin": 1013536,
+  "songlm_s.json": 3577,
+  "planner.json": 2169,
+  "planner.bin": 229604
+ }
+}

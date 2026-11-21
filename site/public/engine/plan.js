@@ -122,7 +122,7 @@ export function planSong(style, seed, {bpm}) {
       : s.type === 'intro' ? pick(rng, [['swell', 2], ['fill', 1], [null, 2]])
       : next === 'break' ? pick(rng, [['cut', 1], ['swell', 2], [null, 2], ['tapestop', .3]])
       : pick(rng, [['fill', 3], ['build', .5], ['swell', 2], [null, 2]]);
-    if (!beat && (s.out === 'fill' || s.out === 'drop' || s.out === 'cut')) s.out = pick(rng, [['swell', 2], [null, 1]]);
+    if (!beat && (s.out === 'fill' || s.out === 'drop' || s.out === 'cut' || s.out === 'build')) s.out = pick(rng, [['swell', 2], [null, 1]]);
   }
   // The climax: the most intense body section gets every layer and a clear energy peak.
   const main = sections.filter(s => !['intro', 'outro', 'break', 'bridge'].includes(s.type));
@@ -141,6 +141,6 @@ export function planSong(style, seed, {bpm}) {
   climax.filter = [12000, 14000];
   const materials = {A: {seedOffset: 0}, B: {seedOffset: 1}, C: {seedOffset: 2}};
   // Little extras between transitions: how often per 8 bars, by style.
-  const candy = {rate: beat ? .6 : .45, kinds: beat ? ['arp', 'rumble', 'ghost', 'swell'] : ['arp', 'rumble', 'swell']};
+  const candy = {rate: beat ? .6 : .45, kinds: beat ? ['arp', 'rumble', 'ghost', 'swell'] : preset.solo ? ['arp', 'swell'] : ['arp', 'rumble', 'swell']};
   return {version: 1, style, seed, bpm, totalBars: start, sections, materials, candy};
 }

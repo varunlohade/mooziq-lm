@@ -104,6 +104,10 @@ The whole pipeline cost about $11 of rented GPU time. [DATA.md](DATA.md) explain
 
 Code and model weights: MIT, © 2026 Varun Lohade (see [LICENSE](LICENSE)). The samples and ambience recordings keep their own licences, listed with full attribution in [CREDITS.md](CREDITS.md).
 
+## Jazz Hop: fine-tuned song models
+
+The live Jazz Hop style is planned and composed by a fine-tuned song planner and multi-track composer (`models/jazzhop-finetuned/`, ~1.2 MB total), picked in a blind listening test. The other eight styles use the rule-based song planner with the bar-level model writing the chords and melody. See `site/public/engine/learned.js`.
+
 ## Licence
 
 Code and models: MIT (see LICENSE). The audio samples in `site/public/samples/` are not covered by the MIT licence; they keep their own licences, listed in [CREDITS.md](CREDITS.md).

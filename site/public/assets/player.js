@@ -140,7 +140,7 @@ worker.onmessage = ({data}) => {
 // Storage, so a repeat visit starts at once. Music starts once it is ready and the first
 // song is written.
 // Rename the cache whenever the shipped model changes; older copies are deleted.
-const MODEL = {bin: 'model/model.bin', json: 'model/model.json'}, MODEL_CACHE = 'lofi-model-b483k-1';
+const MODEL = {bin: 'model/model.bin', json: 'model/model.json'}, MODEL_CACHE = 'lofi-model-song-v2';
 caches?.keys?.().then(names => names.filter(n => n.startsWith('lofi-model') && n !== MODEL_CACHE).forEach(n => caches.delete(n))).catch(() => {});
 const slowdown = +(query.get('slowdown') || 0);
 const modelState = debug.model = {phase: 'loading', received: 0, total: 0, cached: false, writing: null};
@@ -171,10 +171,30 @@ function showModelStatus() {
 }
 (async () => {
   try {
-    const meta = JSON.parse(new TextDecoder().decode(await cachedFetch(MODEL.json)));
-    const bytes = await cachedFetch(MODEL.bin, (received, total) => { modelState.received = received; modelState.total = total; showModelStatus(); });
+    const part = async (json, bin, progress) => ({
+      meta: JSON.parse(new TextDecoder().decode(await cachedFetch(json))),
+      bytes: await cachedFetch(bin, progress)
+    });
+    const progress = (received, total) => {
+      Object.assign(modelState, {received, total});
+      showModelStatus();
+    };
+    const loadLearned = async () => {
+      const [planner, composer] = await Promise.all([
+        part('model/learned/planner.json', 'model/learned/planner.bin'),
+        part('model/learned/songlm_s.json', 'model/learned/songlm_s.bin')
+      ]);
+      return {planner, composer};
+    };
+    const [composer, learned] = await Promise.all([
+      part(MODEL.json, MODEL.bin, progress),
+      loadLearned().catch(error => { console.warn('Using the preset engine', error); return null; })
+    ]);
     modelState.phase = 'ready'; modelState.readyAt = performance.now();
-    worker.postMessage({t: 'init', seed: sessionSeed, style, slowdown, meta, bytes}, [bytes]);
+    const buffers = [composer.bytes];
+    if (learned) buffers.push(learned.planner.bytes, learned.composer.bytes);
+    worker.postMessage({t: 'init', seed: sessionSeed, style, slowdown, ...composer, learned,
+      allLearned: query.get('engine') === 'learned'}, buffers);
     showModelStatus();
   } catch (error) { console.error('Model failed to load', error); }
 })();
@@ -200,6 +220,10 @@ function show(id) {
   room?.setStyle(tunes.get(id).style);
   debug.shownLog.push({deck: id, style: tunes.get(id).style, at: performance.now()});
   if (debug.shownLog.length > 200) debug.shownLog.splice(0, 100);
+  debug.engine = tunes.get(id).engine;
+  $('#subtitle-text').textContent = debug.engine === 'learned'
+    ? 'A never-ending radio, written live by a song planner and composer on your device.'
+    : subtitle('483K-parameter');
   hooks.onTune(tunes.get(id));
 }
 function onMixer({data}) {
@@ -330,7 +354,9 @@ function updateSpin(){
   if(!frame){lastFrame=performance.now();frame=requestAnimationFrame(spin)}
 }
 function shareUrl() {
-  return new URL('?seed=' + seedText + '&style=' + style, location.href).href;
+  const url = new URL('?seed=' + seedText + '&style=' + style, location.href);
+  if (query.get('engine') === 'learned') url.searchParams.set('engine', 'learned');
+  return url.href;
 }
 function selectStyle(kind, user) {
   if (user && !manualChange({t: 'style', style: kind})) return;

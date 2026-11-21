@@ -9,6 +9,7 @@
 import {random} from './neural/random.js';
 import {padEvents} from './pad.js';
 import {planSong, validatePlan} from './plan.js';
+import {learnedPlan, REST_SHIFT} from './learned.js';
 import {develop} from './develop.js';
 
 const mod = (n, m) => (n % m + m) % m;
@@ -39,13 +40,17 @@ function chordGroups(keys) {
   return groups.filter(g => g.notes.length >= 3);
 }
 const chordAt = (keys, beat) => chordGroups(keys).filter(g => g.beat <= beat + .05).at(-1)?.notes ?? [];
-export function createArrangedSong(engine, meta, bytes, seed, style, plan, onSection) {
+// learned: {planner, composer} ({meta, bytes} each) runs the learned song path instead of
+// planSong() and the shipped composer model (engine/learned.js).
+export function createArrangedSong(engine, meta, bytes, seed, style, plan, onSection, learned) {
   const first = engine.songPlan(seed);
-  plan = plan || planSong(style, seed, {bpm: first.bpm});
+  plan = plan || (learned ? learnedPlan(learned.planner, style, seed, {bpm: first.bpm, mode: first.mode}) : planSong(style, seed, {bpm: first.bpm}));
   const problems = validatePlan(plan);
   if (problems.length) throw new Error('Invalid song plan: ' + problems.join(', '));
   const rng = random((seed ^ 0xa11a9e) >>> 0), instances = {};
-  const material = name => instances[name] ||= engine.createSong(meta, bytes, siblingSeed(engine, seed, plan.materials[name].seedOffset));
+  // The learned composer reads the section it is writing for from ctx (see engine/slow.js).
+  const ctx = {sec: 0, act: 15}, songMeta = learned ? {...learned.composer.meta, style, ctx, restShift: REST_SHIFT[style] || 0} : meta, songBytes = learned ? learned.composer.bytes : bytes;
+  const material = name => instances[name] ||= engine.createSong(songMeta, songBytes, siblingSeed(engine, seed, plan.materials[name].seedOffset));
   const lead = material('A');
   const {bpm, shift} = lead, beatSec = 60 / bpm;
   const sectionAt = bar => plan.sections.find(s => bar >= s.start && bar < s.start + s.bars);
@@ -167,7 +172,16 @@ export function createArrangedSong(engine, meta, bytes, seed, style, plan, onSec
       return events;
     }
     const local = bar - section.start, t = section.tracks;
-    const raw = material(section.material).nextBar(), info = raw.info;
+    if (learned) Object.assign(ctx, section.learned);
+    let raw = material(section.material).nextBar();
+    const info = raw.info, line = learned && info.tokens?.info?.bassLine;
+    // Learned path: the composer's bass line replaces the style's bass pattern (when it wrote one).
+    if (line && raw.some(e => e.type === 'bass')) {
+      const gain = Math.max(...raw.filter(e => e.type === 'bass').map(e => e.gain)), keep = raw.filter(e => e.type !== 'bass');
+      raw = [...keep, ...line.map(n => ({type: 'bass', beat: n.at * .5 + .03, pitch: n.pitch, gain: gain * (n.at === 0 ? 1 : .85), pan: 0,
+        duration: Math.max(.25, Math.min(n.len, 4 - n.at * .5) - .15 / beatSec - .05), seed: (n.pitch * 7919 + bar * 31 + n.at) >>> 0}))];
+      raw.info = info;
+    }
     candyCooldown--;
     let events = [];
     for (const e of raw) {
