@@ -103,3 +103,7 @@ The whole pipeline cost about $11 of rented GPU time. [DATA.md](DATA.md) explain
 ## Credits and licence
 
 Code and model weights: MIT, © 2026 Varun Lohade (see [LICENSE](LICENSE)). The samples and ambience recordings keep their own licences, listed with full attribution in [CREDITS.md](CREDITS.md).
+
+## Licence
+
+Code and models: MIT (see LICENSE). The audio samples in `site/public/samples/` are not covered by the MIT licence; they keep their own licences, listed in [CREDITS.md](CREDITS.md).
